@@ -1,0 +1,273 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PLUGIN_NAME: "Nebula Stereo Delay"
+  PACKAGE_NAME: "nebula-stereo-delay"
+  LIB_CRATE_NAME: "nebula_stereo_delay"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Lint
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libx11-dev \
+            libgl-dev \
+            libasound2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lint-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            lint-cargo-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # macOS — Universal Binary (arm64 + x86_64) → CLAP, VST3, AUv2
+  # ──────────────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS
+    needs: lint
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-cargo-${{ runner.os }}-
+
+      - name: Install cmake (for clap-wrapper AUv2 build)
+        run: brew install cmake
+
+      - name: Build plugin
+        run: chmod +x scripts/build_macos.sh && ./scripts/build_macos.sh
+
+      - name: Zip CLAP bundle
+        run: |
+          cd build/macos
+          zip -r "${{ env.PACKAGE_NAME }}-macos-clap.zip" "${{ env.PLUGIN_NAME }}.clap"
+
+      - name: Zip VST3 bundle
+        run: |
+          cd build/macos
+          zip -r "${{ env.PACKAGE_NAME }}-macos-vst3.zip" "${{ env.PLUGIN_NAME }}.vst3"
+
+      - name: Zip AUv2 bundle
+        run: |
+          cd build/macos
+          zip -r "${{ env.PACKAGE_NAME }}-macos-auv2.zip" "${{ env.PLUGIN_NAME }}.component"
+
+      - name: Upload CLAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-macos-clap
+          path: build/macos/${{ env.PACKAGE_NAME }}-macos-clap.zip
+          if-no-files-found: error
+
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-macos-vst3
+          path: build/macos/${{ env.PACKAGE_NAME }}-macos-vst3.zip
+          if-no-files-found: error
+
+      - name: Upload AUv2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-macos-auv2
+          path: build/macos/${{ env.PACKAGE_NAME }}-macos-auv2.zip
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Windows — x86_64 → VST3
+  # ──────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows
+    needs: lint
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            windows-cargo-${{ runner.os }}-
+
+      - name: Build plugin
+        shell: pwsh
+        run: scripts/build_windows.ps1
+
+      - name: Zip VST3 bundle
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "build\windows\${{ env.PLUGIN_NAME }}.vst3" `
+            -DestinationPath "build\windows\${{ env.PACKAGE_NAME }}-windows-vst3.zip"
+
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-windows-vst3
+          path: build\windows\${{ env.PACKAGE_NAME }}-windows-vst3.zip
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Linux — x86_64 → CLAP, VST3
+  # ──────────────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build Linux
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libx11-dev \
+            libgl-dev \
+            libasound2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            linux-cargo-${{ runner.os }}-
+
+      - name: Build plugin
+        run: chmod +x scripts/build_linux.sh && ./scripts/build_linux.sh
+
+      - name: Zip CLAP bundle
+        run: |
+          cd build/linux
+          zip -r "${{ env.PACKAGE_NAME }}-linux-clap.zip" "${{ env.PLUGIN_NAME }}.clap"
+
+      - name: Zip VST3 bundle
+        run: |
+          cd build/linux
+          zip -r "${{ env.PACKAGE_NAME }}-linux-vst3.zip" "${{ env.PLUGIN_NAME }}.vst3"
+
+      - name: Upload CLAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-linux-clap
+          path: build/linux/${{ env.PACKAGE_NAME }}-linux-clap.zip
+          if-no-files-found: error
+
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-linux-vst3
+          path: build/linux/${{ env.PACKAGE_NAME }}-linux-vst3.zip
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Release — only on version tag push (v*)
+  # ──────────────────────────────────────────────────────────────────────────
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: List release artifacts
+        run: find release-artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Nebula Stereo Delay ${{ steps.version.outputs.VERSION }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-artifacts/${{ env.PACKAGE_NAME }}-macos-clap/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-macos-vst3/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-macos-auv2/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-windows-vst3/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-linux-clap/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-linux-vst3/*.zip
