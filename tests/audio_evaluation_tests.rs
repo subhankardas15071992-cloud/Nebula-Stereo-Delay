@@ -386,23 +386,41 @@ fn flat_spectral_balance() {
     let noise_l = generate_white_noise(num_samples, 42);
     let noise_r = generate_white_noise(num_samples, 137);
 
-    let params = make_params(0.05);
+    let delay_secs = 0.05;
+    let delay_samples = (delay_secs * SR) as usize;
+    let mut params = make_params(delay_secs);
+    params.feedback_l = 0.0;
+    params.feedback_r = 0.0;
 
     let output = process_block(&mut engine, &noise_l, &noise_r, &params);
 
     // Collect L channel output, skip warmup
     let warmup = 4096;
     let out_l: Vec<f64> = output[warmup..].iter().map(|(l, _)| *l).collect();
+    let reference_l = &noise_l[(warmup - delay_samples)..(warmup - delay_samples + out_l.len())];
 
-    let spectrum = compute_magnitude_spectrum(&out_l, FFT_SIZE);
+    let average_spectrum = |signal: &[f64]| {
+        let mut spectrum = vec![0.0; FFT_SIZE / 2];
+        let mut frames = 0usize;
+        for chunk in signal.chunks_exact(FFT_SIZE).take(64) {
+            let frame_spectrum = compute_magnitude_spectrum(chunk, FFT_SIZE);
+            for (acc, mag) in spectrum.iter_mut().zip(frame_spectrum) {
+                *acc += mag;
+            }
+            frames += 1;
+        }
+        for mag in &mut spectrum {
+            *mag /= frames.max(1) as f64;
+        }
+        spectrum
+    };
 
-    // Check flatness in the 100 Hz – 18 kHz range
-    let passband_avg = avg_mag_in_band(&spectrum, 100.0, 18000.0, SR);
-    eprintln!("  Passband average magnitude: {passband_avg:.6}");
+    let spectrum = average_spectrum(&out_l);
+    let reference_spectrum = average_spectrum(reference_l);
 
-    // Check sub-bands (each should be within ±3 dB of passband average)
+    // Check sub-bands against the delayed source spectrum. This avoids
+    // mistaking the deterministic test-noise spectrum for plugin coloration.
     let bands = [
-        (100.0, 500.0, "100-500 Hz"),
         (500.0, 2000.0, "500-2000 Hz"),
         (2000.0, 5000.0, "2-5 kHz"),
         (5000.0, 10000.0, "5-10 kHz"),
@@ -411,15 +429,16 @@ fn flat_spectral_balance() {
 
     for (lo, hi, name) in bands {
         let band_avg = avg_mag_in_band(&spectrum, lo, hi, SR);
-        let ratio_db = if band_avg > 0.0 && passband_avg > 0.0 {
-            20.0 * (band_avg / passband_avg).log10()
+        let reference_avg = avg_mag_in_band(&reference_spectrum, lo, hi, SR);
+        let ratio_db = if band_avg > 0.0 && reference_avg > 0.0 {
+            20.0 * (band_avg / reference_avg).log10()
         } else {
             -200.0
         };
-        eprintln!("  {name}: {ratio_db:+.1} dB relative to passband");
+        eprintln!("  {name}: {ratio_db:+.1} dB relative to delayed input");
         assert!(
-            ratio_db.abs() < 6.0,
-            "{name} deviation = {ratio_db:+.1} dB, expected within ±6 dB"
+            ratio_db.abs() < 1.5,
+            "{name} deviation = {ratio_db:+.1} dB, expected within ±1.5 dB"
         );
     }
 }

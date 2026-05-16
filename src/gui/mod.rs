@@ -52,6 +52,7 @@ use nih_plug_egui::EguiState;
 use crate::parameters::{
     InputModeParam, NebulaStereoDelayParams, NoteValueParam, ParamSnapshot, RoutingModeParam,
 };
+use crate::preset::{PresetManager, PresetValues};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Theme constants
@@ -109,6 +110,12 @@ struct EditorState {
     midi_learn_active: bool,
     /// The parameter ID currently targeted for MIDI learn, if any.
     midi_learn_target: Option<String>,
+    /// Factory/user preset IO.
+    preset_manager: PresetManager,
+    /// Name used when saving a user preset.
+    preset_name: String,
+    /// Short status shown in the preset menu after save/load actions.
+    preset_status: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -132,6 +139,9 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
             egui_state: egui_state_for_closure,
             midi_learn_active: false,
             midi_learn_target: None,
+            preset_manager: PresetManager::new(),
+            preset_name: "User Preset".to_string(),
+            preset_status: None,
         },
         |ctx, _state| {
             apply_dark_theme(ctx);
@@ -238,7 +248,7 @@ fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, 
                 ui.add_space(14.0 * s);
 
                 // Preset button
-                draw_preset_button(ui, s);
+                draw_preset_button(ui, state, setter, s);
                 ui.add_space(6.0 * s);
 
                 // A/B toggle
@@ -251,6 +261,10 @@ fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, 
                 draw_redo_btn(ui, state, setter, s);
 
                 ui.add_space(10.0 * s);
+
+                // MIDI Learn
+                draw_midi_learn_btn(ui, state, s);
+                ui.add_space(4.0 * s);
 
                 // FX Bypass
                 draw_bypass_btn(ui, state, setter, s);
@@ -270,12 +284,156 @@ fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, 
 
 // ── Top-bar helpers ──────────────────────────────────────────────────────
 
-fn draw_preset_button(ui: &mut Ui, s: f32) {
+fn draw_preset_button(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let resp = ui.add(
         Button::new(rich("Preset", 11.0 * s).color(TEXT_PRI))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
             .corner_radius(corner_radius(3.0 * s)),
+    );
+    let popup_id = ui.id().with("preset_menu");
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+
+    egui::popup::popup_above_or_below_widget(
+        ui,
+        popup_id,
+        &resp,
+        egui::AboveOrBelow::Below,
+        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            Frame::NONE
+                .fill(PANEL_BG)
+                .stroke(Stroke::new(1.0, BORDER))
+                .show(ui, |ui| {
+                    ui.set_min_width(250.0 * s);
+
+                    ui.label(rich("Save", 10.0 * s).color(ACCENT).strong());
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.preset_name)
+                                .desired_width(138.0 * s)
+                                .font(egui::TextStyle::Small),
+                        );
+                        if ui
+                            .add(Button::new(rich("Current", 9.0 * s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            let values = preset_values_from_params(&state.params);
+                            state.preset_status = match state.preset_manager.save_user_preset(
+                                &state.preset_name,
+                                "Nebula User",
+                                &values,
+                            ) {
+                                Ok(()) => Some(format!("Saved {}", state.preset_name)),
+                                Err(err) => Some(err),
+                            };
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(Button::new(rich("Save A", 9.0 * s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            if let Ok(snapshots) = state.params.ab_snapshots.read() {
+                                let values = preset_values_from_snapshot(&snapshots.a);
+                                state.preset_status = match state.preset_manager.save_user_preset(
+                                    &format!("{} A", state.preset_name),
+                                    "Nebula User",
+                                    &values,
+                                ) {
+                                    Ok(()) => Some(format!("Saved {} A", state.preset_name)),
+                                    Err(err) => Some(err),
+                                };
+                            }
+                        }
+                        if ui
+                            .add(Button::new(rich("Save B", 9.0 * s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            if let Ok(snapshots) = state.params.ab_snapshots.read() {
+                                let values = preset_values_from_snapshot(&snapshots.b);
+                                state.preset_status = match state.preset_manager.save_user_preset(
+                                    &format!("{} B", state.preset_name),
+                                    "Nebula User",
+                                    &values,
+                                ) {
+                                    Ok(()) => Some(format!("Saved {} B", state.preset_name)),
+                                    Err(err) => Some(err),
+                                };
+                            }
+                        }
+                    });
+
+                    if let Some(status) = &state.preset_status {
+                        ui.label(rich(status, 8.0 * s).color(TEXT_SEC));
+                    }
+
+                    ui.separator();
+                    ui.label(rich("Factory", 10.0 * s).color(ACCENT).strong());
+                    let factory = state.preset_manager.factory_presets().to_vec();
+                    for preset in factory {
+                        if ui
+                            .add(Button::new(rich(&preset.name, 9.0 * s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            state.params.push_undo();
+                            state
+                                .preset_manager
+                                .load_preset(&preset, &state.params, setter);
+                            state.preset_status = Some(format!("Loaded {}", preset.name));
+                            ui.memory_mut(|m| m.close_popup());
+                        }
+                    }
+
+                    ui.separator();
+                    ui.label(rich("User", 10.0 * s).color(ACCENT).strong());
+                    match state.preset_manager.user_presets() {
+                        Ok(user_presets) if user_presets.is_empty() => {
+                            ui.label(rich("No user presets", 8.0 * s).color(TEXT_SEC));
+                        }
+                        Ok(user_presets) => {
+                            for preset in user_presets {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add(Button::new(
+                                            rich(&preset.name, 9.0 * s).color(TEXT_PRI),
+                                        ))
+                                        .clicked()
+                                    {
+                                        state.params.push_undo();
+                                        state.preset_manager.load_preset(
+                                            &preset,
+                                            &state.params,
+                                            setter,
+                                        );
+                                        state.preset_status =
+                                            Some(format!("Loaded {}", preset.name));
+                                        ui.memory_mut(|m| m.close_popup());
+                                    }
+                                    if ui
+                                        .add(Button::new(rich("Delete", 8.0 * s).color(TEXT_SEC)))
+                                        .clicked()
+                                    {
+                                        state.preset_status = match state
+                                            .preset_manager
+                                            .delete_user_preset(&preset.name)
+                                        {
+                                            Ok(()) => Some(format!("Deleted {}", preset.name)),
+                                            Err(err) => Some(err),
+                                        };
+                                    }
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            ui.label(rich(err, 8.0 * s).color(DANGER));
+                        }
+                    }
+                });
+        },
     );
     resp.on_hover_text("Preset management: save, load, and recall");
 }
@@ -297,17 +455,9 @@ fn draw_ab_button(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>
     );
 
     if resp.clicked() {
-        // Save current state to the old slot, then load the new slot.
-        let new_slot = if slot == 0 { 1u8 } else { 0u8 };
-        state.params.ab_state.store(new_slot, Ordering::Relaxed);
-        if let Ok(snapshots) = state.params.ab_snapshots.read() {
-            let snapshot = if new_slot == 0 {
-                &snapshots.a
-            } else {
-                &snapshots.b
-            };
-            apply_snapshot(&state.params, setter, snapshot);
-        }
+        state.params.push_undo();
+        let snapshot = state.params.ab_toggle();
+        apply_snapshot(&state.params, setter, &snapshot);
     }
     resp.on_hover_text("Toggle A/B comparison");
 }
@@ -346,6 +496,99 @@ fn draw_redo_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>,
         }
     }
     resp.on_hover_text("Redo");
+}
+
+fn draw_midi_learn_btn(ui: &mut Ui, state: &mut EditorState, s: f32) {
+    let learning = state.midi_learn_active
+        || state
+            .params
+            .midi_learn
+            .read()
+            .map(|ml| ml.is_learning())
+            .unwrap_or(false);
+    let global_on = state
+        .params
+        .midi_learn
+        .read()
+        .map(|ml| ml.is_global_enabled())
+        .unwrap_or(true);
+    let label = if learning { "LEARN..." } else { "MIDI" };
+
+    let resp = ui.add(
+        Button::new(rich(label, 11.0 * s).color(if global_on { TEXT_PRI } else { TEXT_SEC }))
+            .fill(if learning { BTN_ON } else { WIDGET_BG })
+            .stroke(Stroke::new(
+                1.0,
+                if learning {
+                    ACCENT
+                } else if global_on {
+                    BORDER
+                } else {
+                    DANGER
+                },
+            ))
+            .corner_radius(corner_radius(3.0 * s)),
+    );
+
+    if resp.clicked() {
+        state.midi_learn_active = !state.midi_learn_active;
+        if !state.midi_learn_active {
+            state.midi_learn_target = None;
+            if let Ok(mut ml) = state.params.midi_learn.write() {
+                ml.stop_learn();
+            }
+        }
+    }
+
+    resp.context_menu(|ui| {
+        let mut close = false;
+        if let Ok(mut ml) = state.params.midi_learn.write() {
+            if ui
+                .button(if ml.is_global_enabled() {
+                    "MIDI Off"
+                } else {
+                    "MIDI On"
+                })
+                .clicked()
+            {
+                ml.toggle_global_enabled();
+                close = true;
+            }
+
+            ui.separator();
+            ui.label(rich("Clean Up", 10.0).color(ACCENT).strong());
+            let mappings = ml.mappings().to_vec();
+            for mapping in mappings {
+                let label = format!(
+                    "{}  Ch {} CC {}",
+                    mapping.param_id, mapping.channel, mapping.cc
+                );
+                if ui.button(label).clicked() {
+                    ml.clean_up(&mapping.param_id);
+                    close = true;
+                }
+            }
+            if ui.button("Clear All").clicked() {
+                ml.clear_all();
+                close = true;
+            }
+
+            ui.separator();
+            if ui.button("Roll Back").clicked() {
+                ml.roll_back();
+                close = true;
+            }
+            if ui.button("Save").clicked() {
+                ml.save_for_rollback();
+                close = true;
+            }
+        }
+        if close {
+            ui.close_menu();
+        }
+    });
+
+    resp.on_hover_text("MIDI learn");
 }
 
 fn draw_bypass_btn(ui: &mut Ui, state: &mut EditorState, _setter: &ParamSetter<'_>, s: f32) {
@@ -387,6 +630,7 @@ fn draw_sync_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>,
             .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
+        state.params.push_undo();
         setter.begin_set_parameter(&state.params.tempo_sync);
         setter.set_parameter(&state.params.tempo_sync, !synced);
         setter.end_set_parameter(&state.params.tempo_sync);
@@ -413,6 +657,7 @@ fn draw_link_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>,
             .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
+        state.params.push_undo();
         setter.begin_set_parameter(&state.params.stereo_link);
         setter.set_parameter(&state.params.stereo_link, !linked);
         setter.end_set_parameter(&state.params.stereo_link);
@@ -469,7 +714,7 @@ fn draw_channel_panel(
                         setter,
                         s,
                         ch_knob_param!(params, ch, low_cut_l, low_cut_r),
-                        "LOW CUT",
+                        "HPF",
                         KnobSize::Small,
                     );
                     draw_knob_field(
@@ -478,7 +723,27 @@ fn draw_channel_panel(
                         setter,
                         s,
                         ch_knob_param!(params, ch, high_cut_l, high_cut_r),
-                        "HIGH CUT",
+                        "LPF",
+                        KnobSize::Small,
+                    );
+                });
+                ui.horizontal(|ui| {
+                    draw_knob_field(
+                        ui,
+                        state,
+                        setter,
+                        s,
+                        ch_knob_param!(params, ch, low_cut_slope_l, low_cut_slope_r),
+                        "HPFS",
+                        KnobSize::Small,
+                    );
+                    draw_knob_field(
+                        ui,
+                        state,
+                        setter,
+                        s,
+                        ch_knob_param!(params, ch, high_cut_slope_l, high_cut_slope_r),
+                        "LPFS",
                         KnobSize::Small,
                     );
                 });
@@ -495,12 +760,13 @@ fn draw_channel_panel(
                         "FEEDBACK",
                         KnobSize::Small,
                     );
+                    let phase_params = state.params.clone();
                     let phase_param = if ch == Channel::Left {
-                        &state.params.feedback_phase_l
+                        &phase_params.feedback_phase_l
                     } else {
-                        &state.params.feedback_phase_r
+                        &phase_params.feedback_phase_r
                     };
-                    draw_phase_btn(ui, setter, phase_param, s, "FB \u{00d8}");
+                    draw_phase_btn(ui, state, setter, phase_param, s, "FB \u{00d8}");
                 });
                 ui.add_space(6.0 * s);
 
@@ -600,9 +866,20 @@ fn draw_input_popup(
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
                         .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
+                            state.params.push_undo();
                             setter.begin_set_parameter(param);
                             setter.set_parameter(param, variant);
                             setter.end_set_parameter(param);
+                            if stereo_link_active(ui, &state.params) {
+                                let other = if ch == Channel::Left {
+                                    &state.params.input_mode_r
+                                } else {
+                                    &state.params.input_mode_l
+                                };
+                                setter.begin_set_parameter(other);
+                                setter.set_parameter(other, variant);
+                                setter.end_set_parameter(other);
+                            }
                             ui.memory_mut(|m| m.close_popup());
                         }
                     }
@@ -645,20 +922,111 @@ fn draw_delay_section(
                     let halve = ch_knob_param!(params, ch, halve_l, halve_r);
                     let double = ch_knob_param!(params, ch, double_l, double_r);
 
-                    draw_toggle_btn(ui, setter, halve, ":2", s);
+                    draw_toggle_btn(ui, state, setter, halve, ":2", s);
                     ui.add_space(4.0 * s);
-                    draw_toggle_btn(ui, setter, double, "x2", s);
+                    draw_toggle_btn(ui, state, setter, double, "x2", s);
                 });
 
                 // Sync-only controls
                 if synced {
                     ui.add_space(4.0 * s);
+                    draw_note_value_buttons(ui, state, setter, s, ch);
+                    ui.add_space(3.0 * s);
                     draw_note_popup(ui, state, setter, s, ch);
                     ui.add_space(4.0 * s);
                     draw_deviation_field(ui, state, setter, s, ch);
                 }
             });
         });
+}
+
+fn note_variants() -> [(NoteValueParam, &'static str); 12] {
+    [
+        (NoteValueParam::Whole, "1/1"),
+        (NoteValueParam::Half, "1/2"),
+        (NoteValueParam::HalfTriplet, "1/2T"),
+        (NoteValueParam::Quarter, "1/4"),
+        (NoteValueParam::QuarterTriplet, "1/4T"),
+        (NoteValueParam::Eighth, "1/8"),
+        (NoteValueParam::EighthTriplet, "1/8T"),
+        (NoteValueParam::Sixteenth, "1/16"),
+        (NoteValueParam::SixteenthTriplet, "1/16T"),
+        (NoteValueParam::ThirtySecond, "1/32"),
+        (NoteValueParam::ThirtySecondTriplet, "1/32T"),
+        (NoteValueParam::SixtyFourth, "1/64"),
+    ]
+}
+
+fn draw_note_value_buttons(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    s: f32,
+    ch: Channel,
+) {
+    let note_param = if ch == Channel::Left {
+        &state.params.note_l
+    } else {
+        &state.params.note_r
+    };
+    let deviation_param = if ch == Channel::Left {
+        &state.params.deviation_l
+    } else {
+        &state.params.deviation_r
+    };
+    let current = note_param.value().to_index();
+
+    egui::Grid::new(if ch == Channel::Left {
+        "note_buttons_l"
+    } else {
+        "note_buttons_r"
+    })
+    .num_columns(6)
+    .spacing(vec2(2.0 * s, 2.0 * s))
+    .show(ui, |ui| {
+        for (idx, (variant, label)) in note_variants().into_iter().enumerate() {
+            let selected = variant.to_index() == current;
+            let resp = ui.add(
+                Button::new(rich(label, 8.0 * s).color(if selected { TEXT_PRI } else { TEXT_SEC }))
+                    .fill(if selected { BTN_ON } else { WIDGET_BG })
+                    .stroke(Stroke::new(1.0, if selected { ACCENT } else { BORDER }))
+                    .corner_radius(corner_radius(2.0 * s))
+                    .min_size(vec2(28.0 * s, 18.0 * s)),
+            );
+            if resp.clicked() {
+                state.params.push_undo();
+                setter.begin_set_parameter(note_param);
+                setter.set_parameter(note_param, variant);
+                setter.end_set_parameter(note_param);
+                if stereo_link_active(ui, &state.params) {
+                    let other_note = if ch == Channel::Left {
+                        &state.params.note_r
+                    } else {
+                        &state.params.note_l
+                    };
+                    setter.begin_set_parameter(other_note);
+                    setter.set_parameter(other_note, variant);
+                    setter.end_set_parameter(other_note);
+                }
+                setter.begin_set_parameter(deviation_param);
+                setter.set_parameter(deviation_param, 0.0);
+                setter.end_set_parameter(deviation_param);
+                if stereo_link_active(ui, &state.params) {
+                    let other_deviation = if ch == Channel::Left {
+                        &state.params.deviation_r
+                    } else {
+                        &state.params.deviation_l
+                    };
+                    setter.begin_set_parameter(other_deviation);
+                    setter.set_parameter(other_deviation, 0.0);
+                    setter.end_set_parameter(other_deviation);
+                }
+            }
+            if idx % 6 == 5 {
+                ui.end_row();
+            }
+        }
+    });
 }
 
 fn draw_note_popup(
@@ -693,21 +1061,6 @@ fn draw_note_popup(
         ui.memory_mut(|m| m.toggle_popup(popup_id));
     }
 
-    let notes: [(NoteValueParam, &str); 12] = [
-        (NoteValueParam::Whole, "1/1"),
-        (NoteValueParam::Half, "1/2"),
-        (NoteValueParam::HalfTriplet, "1/2T"),
-        (NoteValueParam::Quarter, "1/4"),
-        (NoteValueParam::QuarterTriplet, "1/4T"),
-        (NoteValueParam::Eighth, "1/8"),
-        (NoteValueParam::EighthTriplet, "1/8T"),
-        (NoteValueParam::Sixteenth, "1/16"),
-        (NoteValueParam::SixteenthTriplet, "1/16T"),
-        (NoteValueParam::ThirtySecond, "1/32"),
-        (NoteValueParam::ThirtySecondTriplet, "1/32T"),
-        (NoteValueParam::SixtyFourth, "1/64"),
-    ];
-
     egui::popup::popup_above_or_below_widget(
         ui,
         popup_id,
@@ -720,7 +1073,7 @@ fn draw_note_popup(
                 .stroke(Stroke::new(1.0, BORDER))
                 .show(ui, |ui| {
                     ui.set_max_width(90.0 * s);
-                    for (variant, name) in notes {
+                    for (variant, name) in note_variants() {
                         let sel = enum_name(variant) == current_name;
                         let btn = Button::new(rich(name, 10.0 * s).color(if sel {
                             ACCENT
@@ -730,9 +1083,20 @@ fn draw_note_popup(
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
                         .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
+                            state.params.push_undo();
                             setter.begin_set_parameter(param);
                             setter.set_parameter(param, variant);
                             setter.end_set_parameter(param);
+                            if stereo_link_active(ui, &state.params) {
+                                let other = if ch == Channel::Left {
+                                    &state.params.note_r
+                                } else {
+                                    &state.params.note_l
+                                };
+                                setter.begin_set_parameter(other);
+                                setter.set_parameter(other, variant);
+                                setter.end_set_parameter(other);
+                            }
                             ui.memory_mut(|m| m.close_popup());
                         }
                     }
@@ -767,15 +1131,32 @@ fn draw_deviation_field(
         );
 
         if resp.drag_started() {
+            state.params.push_undo();
             setter.begin_set_parameter(param);
+            if stereo_link_active(ui, &state.params) {
+                if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                    setter.begin_set_parameter(other);
+                }
+            }
         }
         if resp.dragged() {
             let delta = -resp.drag_delta().y * 0.5;
             let new = (val + delta).clamp(-100.0, 100.0);
             setter.set_parameter(param, new);
+            if stereo_link_active(ui, &state.params) {
+                if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                    let other_new = (other.value() + delta).clamp(-100.0, 100.0);
+                    setter.set_parameter(other, other_new);
+                }
+            }
         }
         if resp.drag_stopped() {
             setter.end_set_parameter(param);
+            if stereo_link_active(ui, &state.params) {
+                if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                    setter.end_set_parameter(other);
+                }
+            }
         }
         resp.on_hover_text("Deviation in cents (drag to adjust)");
     });
@@ -809,7 +1190,8 @@ fn draw_center_section(
                 ui.add_space(14.0 * s);
 
                 // Crossfeed phase
-                draw_phase_btn(ui, setter, &state.params.crossfeed_phase, s, "CF \u{00d8}");
+                let params = state.params.clone();
+                draw_phase_btn(ui, state, setter, &params.crossfeed_phase, s, "CF \u{00d8}");
 
                 ui.add_space(10.0 * s);
             });
@@ -838,7 +1220,7 @@ fn draw_routing_popup(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
         (RoutingModeParam::Crossfeed, "Crossfeed"),
         (RoutingModeParam::NinetyTen, "90/10"),
         (RoutingModeParam::TenNinety, "10/90"),
-        (RoutingModeParam::PingPong, "Ping Pong"),
+        (RoutingModeParam::PingPong, "Ping Pong L/R"),
         (RoutingModeParam::Pan, "Pan L/R"),
         (RoutingModeParam::Rotate, "Rotate L/R"),
     ];
@@ -865,9 +1247,15 @@ fn draw_routing_popup(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
                         .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
+                            state.params.push_undo();
                             setter.begin_set_parameter(param);
                             setter.set_parameter(param, variant);
                             setter.end_set_parameter(param);
+                            if state.params.stereo_link.value() {
+                                setter.begin_set_parameter(&state.params.stereo_link);
+                                setter.set_parameter(&state.params.stereo_link, false);
+                                setter.end_set_parameter(&state.params.stereo_link);
+                            }
                             ui.memory_mut(|m| m.close_popup());
                         }
                     }
@@ -975,9 +1363,17 @@ fn draw_knob_field(
             ui.allocate_exact_size(vec2(diameter, diameter), Sense::click_and_drag());
 
         let mut new_norm = normalized;
+        let linked_counterpart = linked_float_counterpart(&state.params, param.name());
+        let link_active = stereo_link_active(ui, &state.params);
 
         if response.drag_started() {
+            state.params.push_undo();
             setter.begin_set_parameter(param);
+            if link_active {
+                if let Some(other) = linked_counterpart {
+                    setter.begin_set_parameter(other);
+                }
+            }
         }
         if response.dragged() {
             let speed = 1.0 / (diameter * 2.5);
@@ -988,23 +1384,51 @@ fn draw_knob_field(
             // parameters land on exact values.
             let plain = param.preview_plain(new_norm);
             setter.set_parameter(param, plain);
+            if link_active {
+                if let Some(other) = linked_counterpart {
+                    let other_norm = (other.modulated_normalized_value() + (new_norm - normalized))
+                        .clamp(0.0, 1.0);
+                    setter.set_parameter(other, other.preview_plain(other_norm));
+                }
+            }
         }
         if response.drag_stopped() {
             setter.end_set_parameter(param);
+            if link_active {
+                if let Some(other) = linked_counterpart {
+                    setter.end_set_parameter(other);
+                }
+            }
         }
 
         // Double-click → reset to default
         if response.double_clicked() {
+            state.params.push_undo();
             setter.begin_set_parameter(param);
             setter.set_parameter(param, param.default_plain_value());
             setter.end_set_parameter(param);
+            if link_active {
+                if let Some(other) = linked_counterpart {
+                    setter.begin_set_parameter(other);
+                    setter.set_parameter(other, other.default_plain_value());
+                    setter.end_set_parameter(other);
+                }
+            }
         }
 
         // Ctrl/Cmd-click → also reset
         if response.clicked() && ui.input(|i| i.modifiers.command || i.modifiers.ctrl) {
+            state.params.push_undo();
             setter.begin_set_parameter(param);
             setter.set_parameter(param, param.default_plain_value());
             setter.end_set_parameter(param);
+            if link_active {
+                if let Some(other) = linked_counterpart {
+                    setter.begin_set_parameter(other);
+                    setter.set_parameter(other, other.default_plain_value());
+                    setter.end_set_parameter(other);
+                }
+            }
         }
 
         // ── Render ───────────────────────────────────────────
@@ -1113,6 +1537,7 @@ fn draw_arc_line(
 
 fn draw_phase_btn(
     ui: &mut Ui,
+    state: &mut EditorState,
     setter: &ParamSetter<'_>,
     param: &nih_plug::params::BoolParam,
     s: f32,
@@ -1128,15 +1553,26 @@ fn draw_phase_btn(
             .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
+        let link_active = stereo_link_active(ui, &state.params);
+        let linked_counterpart = linked_bool_counterpart(&state.params, param.name());
+        state.params.push_undo();
         setter.begin_set_parameter(param);
         setter.set_parameter(param, !inverted);
         setter.end_set_parameter(param);
+        if link_active {
+            if let Some(other) = linked_counterpart {
+                setter.begin_set_parameter(other);
+                setter.set_parameter(other, !inverted);
+                setter.end_set_parameter(other);
+            }
+        }
     }
-    resp.on_hover_text(if inverted {
+    let resp = resp.on_hover_text(if inverted {
         format!("{label}: Inverted \u{2014} click for Normal")
     } else {
         format!("{label}: Normal \u{2014} click for Inverted")
     });
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1145,6 +1581,7 @@ fn draw_phase_btn(
 
 fn draw_toggle_btn(
     ui: &mut Ui,
+    state: &mut EditorState,
     setter: &ParamSetter<'_>,
     param: &nih_plug::params::BoolParam,
     label: &str,
@@ -1162,10 +1599,21 @@ fn draw_toggle_btn(
         .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
+        let link_active = stereo_link_active(ui, &state.params);
+        let linked_counterpart = linked_bool_counterpart(&state.params, param.name());
+        state.params.push_undo();
         setter.begin_set_parameter(param);
         setter.set_parameter(param, !on);
         setter.end_set_parameter(param);
+        if link_active {
+            if let Some(other) = linked_counterpart {
+                setter.begin_set_parameter(other);
+                setter.set_parameter(other, !on);
+                setter.end_set_parameter(other);
+            }
+        }
     }
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1174,6 +1622,14 @@ fn draw_toggle_btn(
 
 /// Attach a right-click MIDI Learn context menu to a widget response.
 fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state: &mut EditorState) {
+    if state.midi_learn_active && response.clicked() {
+        if let Ok(mut ml) = state.params.midi_learn.write() {
+            ml.start_learn(param_id);
+            state.midi_learn_target = Some(param_id.to_string());
+            state.midi_learn_active = false;
+        }
+    }
+
     response.context_menu(|ui| {
         ui.label(rich("MIDI Learn", 11.0).color(ACCENT).strong());
         ui.separator();
@@ -1200,7 +1656,7 @@ fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state:
         // Clean Up
         if ui.button("Clean Up").clicked() {
             if let Ok(mut ml) = state.params.midi_learn.write() {
-                ml.mappings.retain(|m| m.param_id != param_id);
+                ml.clean_up(param_id);
             }
             ui.close_menu();
         }
@@ -1208,15 +1664,16 @@ fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state:
         // Roll Back
         if ui.button("Roll Back").clicked() {
             if let Ok(mut ml) = state.params.midi_learn.write() {
-                if let Some(pos) = ml.mappings.iter().rposition(|m| m.param_id == param_id) {
-                    ml.mappings.remove(pos);
-                }
+                ml.roll_back();
             }
             ui.close_menu();
         }
 
         // Save
         if ui.button("Save").clicked() {
+            if let Ok(mut ml) = state.params.midi_learn.write() {
+                ml.save_for_rollback();
+            }
             ui.close_menu();
         }
 
@@ -1224,7 +1681,7 @@ fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state:
 
         // Current mapping info
         if let Ok(ml) = state.params.midi_learn.read() {
-            if let Some(mapping) = ml.mappings.iter().find(|m| m.param_id == param_id) {
+            if let Some(mapping) = ml.get_mapping(param_id) {
                 ui.label(
                     rich(
                         format!("Mapped: CC {} Ch {}", mapping.cc, mapping.channel),
@@ -1260,8 +1717,12 @@ fn take_snapshot(params: &NebulaStereoDelayParams) -> ParamSnapshot {
         double_r: params.double_r.value(),
         low_cut_l: params.low_cut_l.value(),
         low_cut_r: params.low_cut_r.value(),
+        low_cut_slope_l: params.low_cut_slope_l.value(),
+        low_cut_slope_r: params.low_cut_slope_r.value(),
         high_cut_l: params.high_cut_l.value(),
         high_cut_r: params.high_cut_r.value(),
+        high_cut_slope_l: params.high_cut_slope_l.value(),
+        high_cut_slope_r: params.high_cut_slope_r.value(),
         feedback_l: params.feedback_l.value(),
         feedback_r: params.feedback_r.value(),
         feedback_phase_l: params.feedback_phase_l.value(),
@@ -1328,8 +1789,12 @@ fn apply_snapshot(
     set_b!(&params.double_r, snap.double_r);
     set_f!(&params.low_cut_l, snap.low_cut_l);
     set_f!(&params.low_cut_r, snap.low_cut_r);
+    set_f!(&params.low_cut_slope_l, snap.low_cut_slope_l);
+    set_f!(&params.low_cut_slope_r, snap.low_cut_slope_r);
     set_f!(&params.high_cut_l, snap.high_cut_l);
     set_f!(&params.high_cut_r, snap.high_cut_r);
+    set_f!(&params.high_cut_slope_l, snap.high_cut_slope_l);
+    set_f!(&params.high_cut_slope_r, snap.high_cut_slope_r);
     set_f!(&params.feedback_l, snap.feedback_l);
     set_f!(&params.feedback_r, snap.feedback_r);
     set_b!(&params.feedback_phase_l, snap.feedback_phase_l);
@@ -1342,6 +1807,47 @@ fn apply_snapshot(
     set_b!(&params.stereo_link, snap.stereo_link);
     set_f!(&params.output_mix_l, snap.output_mix_l);
     set_f!(&params.output_mix_r, snap.output_mix_r);
+}
+
+fn preset_values_from_params(params: &NebulaStereoDelayParams) -> PresetValues {
+    preset_values_from_snapshot(&take_snapshot(params))
+}
+
+fn preset_values_from_snapshot(snap: &ParamSnapshot) -> PresetValues {
+    PresetValues {
+        input_mode_l: snap.input_mode_l as u8,
+        input_mode_r: snap.input_mode_r as u8,
+        delay_time_l: snap.delay_time_l,
+        delay_time_r: snap.delay_time_r,
+        note_l: snap.note_l as u8,
+        note_r: snap.note_r as u8,
+        deviation_l: snap.deviation_l,
+        deviation_r: snap.deviation_r,
+        halve_l: snap.halve_l,
+        halve_r: snap.halve_r,
+        double_l: snap.double_l,
+        double_r: snap.double_r,
+        low_cut_l: snap.low_cut_l,
+        low_cut_r: snap.low_cut_r,
+        low_cut_slope_l: snap.low_cut_slope_l,
+        low_cut_slope_r: snap.low_cut_slope_r,
+        high_cut_l: snap.high_cut_l,
+        high_cut_r: snap.high_cut_r,
+        high_cut_slope_l: snap.high_cut_slope_l,
+        high_cut_slope_r: snap.high_cut_slope_r,
+        feedback_l: snap.feedback_l,
+        feedback_r: snap.feedback_r,
+        feedback_phase_l: snap.feedback_phase_l,
+        feedback_phase_r: snap.feedback_phase_r,
+        crossfeed_lr: snap.crossfeed_lr,
+        crossfeed_rl: snap.crossfeed_rl,
+        crossfeed_phase: snap.crossfeed_phase,
+        routing: snap.routing as u8,
+        tempo_sync: snap.tempo_sync,
+        stereo_link: snap.stereo_link,
+        output_mix_l: snap.output_mix_l,
+        output_mix_r: snap.output_mix_r,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1428,6 +1934,53 @@ fn routing_to_index(val: RoutingModeParam) -> usize {
         RoutingModeParam::PingPong => 5,
         RoutingModeParam::Pan => 6,
         RoutingModeParam::Rotate => 7,
+    }
+}
+
+fn stereo_link_active(ui: &Ui, params: &NebulaStereoDelayParams) -> bool {
+    let flip = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+    params.stereo_link.value() ^ flip
+}
+
+fn linked_float_counterpart<'a>(
+    params: &'a NebulaStereoDelayParams,
+    name: &str,
+) -> Option<&'a nih_plug::params::FloatParam> {
+    match name {
+        "Delay Time L" => Some(&params.delay_time_r),
+        "Delay Time R" => Some(&params.delay_time_l),
+        "Deviation L" => Some(&params.deviation_r),
+        "Deviation R" => Some(&params.deviation_l),
+        "Low Cut L" => Some(&params.low_cut_r),
+        "Low Cut R" => Some(&params.low_cut_l),
+        "Low Cut Slope L" => Some(&params.low_cut_slope_r),
+        "Low Cut Slope R" => Some(&params.low_cut_slope_l),
+        "High Cut L" => Some(&params.high_cut_r),
+        "High Cut R" => Some(&params.high_cut_l),
+        "High Cut Slope L" => Some(&params.high_cut_slope_r),
+        "High Cut Slope R" => Some(&params.high_cut_slope_l),
+        "Feedback L" => Some(&params.feedback_r),
+        "Feedback R" => Some(&params.feedback_l),
+        "Crossfeed L-R" => Some(&params.crossfeed_rl),
+        "Crossfeed R-L" => Some(&params.crossfeed_lr),
+        "Output Mix L" => Some(&params.output_mix_r),
+        "Output Mix R" => Some(&params.output_mix_l),
+        _ => None,
+    }
+}
+
+fn linked_bool_counterpart<'a>(
+    params: &'a NebulaStereoDelayParams,
+    name: &str,
+) -> Option<&'a nih_plug::params::BoolParam> {
+    match name {
+        "Halve L" => Some(&params.halve_r),
+        "Halve R" => Some(&params.halve_l),
+        "Double L" => Some(&params.double_r),
+        "Double R" => Some(&params.double_l),
+        "Feedback Phase L" => Some(&params.feedback_phase_r),
+        "Feedback Phase R" => Some(&params.feedback_phase_l),
+        _ => None,
     }
 }
 

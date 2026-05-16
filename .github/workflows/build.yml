@@ -113,7 +113,7 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Windows — x86_64 → CLAP, VST3
+  # Windows — x86_64 → VST3
   # ──────────────────────────────────────────────────────────────────────────
   build-windows:
     name: Build Windows
@@ -141,26 +141,12 @@ jobs:
         shell: pwsh
         run: scripts/build_windows.ps1
 
-      - name: Zip CLAP bundle
-        shell: pwsh
-        run: |
-          Compress-Archive `
-            -Path "build\windows\${{ env.PLUGIN_NAME }}.clap" `
-            -DestinationPath "build\windows\${{ env.PACKAGE_NAME }}-windows-clap.zip"
-
       - name: Zip VST3 bundle
         shell: pwsh
         run: |
           Compress-Archive `
             -Path "build\windows\${{ env.PLUGIN_NAME }}.vst3" `
             -DestinationPath "build\windows\${{ env.PACKAGE_NAME }}-windows-vst3.zip"
-
-      - name: Upload CLAP artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PACKAGE_NAME }}-windows-clap
-          path: build\windows\${{ env.PACKAGE_NAME }}-windows-clap.zip
-          if-no-files-found: error
 
       - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
@@ -268,7 +254,6 @@ jobs:
           files: |
             release-artifacts/${{ env.PACKAGE_NAME }}-macos-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-macos-vst3/*.zip
-            release-artifacts/${{ env.PACKAGE_NAME }}-windows-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-windows-vst3/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-linux-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-linux-vst3/*.zip

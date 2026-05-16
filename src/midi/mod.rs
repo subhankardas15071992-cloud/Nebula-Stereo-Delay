@@ -337,28 +337,38 @@ impl Default for MidiCcValues {
 /// value when MIDI is re-enabled. Instead, we simply skip the `set()`
 /// call, so the audio thread never sees a value for a disabled parameter.
 /// When re-enabled, the next incoming CC message will be applied normally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidiLearnState {
     /// Active CC → Parameter mappings.
     ///
     /// Invariant: no two entries share the same `(channel, cc)` pair,
     /// and no two entries share the same `param_id`.
+    #[serde(default)]
     mappings: Vec<MidiMapping>,
 
+    /// Global MIDI parameter-control enable. This does not delete mappings.
+    #[serde(default = "default_midi_enabled")]
+    global_enabled: bool,
+
     /// Whether we are currently in MIDI learn mode.
+    #[serde(skip)]
     learning: bool,
 
     /// The parameter we are learning a CC for (if in learn mode).
+    #[serde(skip)]
     learning_param: Option<String>,
 
     /// Previous mapping state, saved for the "Roll Back" feature.
     /// `None` means no snapshot has been saved; `Some(vec)` holds the
     /// snapshot (even if the vec is empty, indicating the user saved
     /// when no mappings were active).
+    #[serde(default)]
     prev_mappings: Option<Vec<MidiMapping>>,
 
     /// Parameters that have their MIDI control temporarily disabled.
     /// The mapping still exists, but CC values are not applied to the
     /// parameter until re-enabled.
+    #[serde(skip)]
     disabled_params: HashSet<String>,
 }
 
@@ -367,6 +377,7 @@ impl MidiLearnState {
     pub fn new() -> Self {
         Self {
             mappings: Vec::new(),
+            global_enabled: true,
             learning: false,
             learning_param: None,
             prev_mappings: None,
@@ -429,7 +440,22 @@ impl MidiLearnState {
         value: u8,
         cc_values: &MidiCcValues,
     ) -> Option<String> {
-        let normalized = value as f32 / 127.0;
+        self.process_cc_event(channel, cc, value as f32 / 127.0, cc_values)
+            .map(|(param_id, _)| param_id)
+    }
+
+    /// Process an incoming MIDI CC message with a normalized value.
+    ///
+    /// Returns the affected parameter ID and normalized value when the CC
+    /// should update a parameter target.
+    pub fn process_cc_event(
+        &mut self,
+        channel: u8,
+        cc: u8,
+        normalized: f32,
+        cc_values: &MidiCcValues,
+    ) -> Option<(String, f32)> {
+        let normalized = normalized.clamp(0.0, 1.0);
 
         if self.learning {
             if let Some(ref param_id) = self.learning_param {
@@ -462,15 +488,16 @@ impl MidiLearnState {
                 self.learning = false;
                 self.learning_param = None;
 
-                return Some(result);
+                return Some((result, normalized));
             }
-        } else {
+        } else if self.global_enabled {
             // Look for an existing mapping for this (channel, cc) pair.
             for mapping in &self.mappings {
                 if mapping.channel == channel && mapping.cc == cc {
                     // Only update the value if MIDI is enabled for this param.
                     if !self.disabled_params.contains(&mapping.param_id) {
                         cc_values.set(channel, cc, normalized);
+                        return Some((mapping.param_id.clone(), normalized));
                     }
                     return None;
                 }
@@ -491,6 +518,13 @@ impl MidiLearnState {
         self.disabled_params.remove(param_id);
     }
 
+    /// Remove every MIDI mapping.
+    pub fn clear_all(&mut self) {
+        self.mappings.clear();
+        self.disabled_params.clear();
+        self.stop_learn();
+    }
+
     /// Roll back to the previously saved mapping state.
     ///
     /// This is the "Roll Back" context menu action. It replaces the current
@@ -502,7 +536,7 @@ impl MidiLearnState {
     /// contain entries that still have a mapping (orphaned disabled entries
     /// are removed).
     pub fn roll_back(&mut self) {
-        if let Some(prev) = self.prev_mappings.take() {
+        if let Some(prev) = self.prev_mappings.clone() {
             self.mappings = prev;
 
             // Rebuild disabled_params: keep only entries that still have
@@ -533,6 +567,21 @@ impl MidiLearnState {
     /// Get a slice of all active mappings.
     pub fn mappings(&self) -> &[MidiMapping] {
         &self.mappings
+    }
+
+    /// Globally enable or disable MIDI parameter control.
+    pub fn set_global_enabled(&mut self, enabled: bool) {
+        self.global_enabled = enabled;
+    }
+
+    /// Toggle global MIDI parameter control.
+    pub fn toggle_global_enabled(&mut self) {
+        self.global_enabled = !self.global_enabled;
+    }
+
+    /// Returns whether global MIDI parameter control is enabled.
+    pub fn is_global_enabled(&self) -> bool {
+        self.global_enabled
     }
 
     /// Toggle MIDI control for a parameter.
@@ -610,6 +659,10 @@ impl Default for MidiLearnState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn default_midi_enabled() -> bool {
+    true
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

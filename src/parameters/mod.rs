@@ -31,6 +31,7 @@ use nih_plug::params::{BoolParam, FloatParam, Params};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp;
+use crate::midi::MidiLearnState;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Enum Parameter Types
@@ -212,8 +213,12 @@ pub struct ParamSnapshot {
     pub double_r: bool,
     pub low_cut_l: f32,
     pub low_cut_r: f32,
+    pub low_cut_slope_l: f32,
+    pub low_cut_slope_r: f32,
     pub high_cut_l: f32,
     pub high_cut_r: f32,
+    pub high_cut_slope_l: f32,
+    pub high_cut_slope_r: f32,
     pub feedback_l: f32,
     pub feedback_r: f32,
     pub feedback_phase_l: bool,
@@ -267,8 +272,12 @@ impl ParamSnapshot {
             double_r: false,
             low_cut_l: 20.0,
             low_cut_r: 20.0,
+            low_cut_slope_l: 12.0,
+            low_cut_slope_r: 12.0,
             high_cut_l: 20000.0,
             high_cut_r: 20000.0,
+            high_cut_slope_l: 12.0,
+            high_cut_slope_r: 12.0,
             feedback_l: 0.4,
             feedback_r: 0.4,
             feedback_phase_l: false,
@@ -325,33 +334,31 @@ impl UndoRedoStack {
     }
 }
 
-/// A single MIDI-learn mapping associating a MIDI CC + channel pair with
-/// a plugin parameter ID.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MidiMapping {
-    pub cc: u8,
-    pub channel: u8,
-    pub param_id: String,
-}
-
-/// MIDI-learn state: a list of CC → parameter mappings.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct MidiLearnState {
-    pub mappings: Vec<MidiMapping>,
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Display Formatters (value ↔ string)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Format a delay time in seconds with 3 decimal places.
+/// Format a delay time in milliseconds with 1 decimal place.
 fn format_delay_time(val: f32) -> String {
-    format!("{val:.3}")
+    format!("{:.1}", val * 1000.0)
 }
 
-/// Parse a delay time string (e.g., "0.500" or "0.500 s").
+/// Parse a delay time string in milliseconds (e.g., "500" or "500 ms").
 fn parse_delay_time(s: &str) -> Option<f32> {
-    s.trim().trim_end_matches('s').trim().parse::<f32>().ok()
+    let trimmed = s.trim();
+    let lower = trimmed.to_lowercase();
+    if lower.ends_with("ms") {
+        trimmed
+            .trim_end_matches("ms")
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|v| v / 1000.0)
+    } else if lower.ends_with('s') {
+        trimmed.trim_end_matches('s').trim().parse::<f32>().ok()
+    } else {
+        trimmed.parse::<f32>().ok().map(|v| v / 1000.0)
+    }
 }
 
 /// Format a deviation value in cents with 1 decimal place.
@@ -391,6 +398,21 @@ fn parse_frequency(s: &str) -> Option<f32> {
             .parse::<f32>()
             .ok()
     }
+}
+
+/// Format a filter slope in dB/octave.
+fn format_slope(val: f32) -> String {
+    format!("{val:.1}")
+}
+
+/// Parse a filter slope string that may include "dB/oct".
+fn parse_slope(s: &str) -> Option<f32> {
+    s.trim()
+        .trim_end_matches("dB/oct")
+        .trim_end_matches("db/oct")
+        .trim()
+        .parse::<f32>()
+        .ok()
 }
 
 /// Format a 0.0–1.0 value as a percentage with 1 decimal place
@@ -517,6 +539,16 @@ pub struct NebulaStereoDelayParams {
     #[id = "lcr"]
     pub low_cut_r: FloatParam,
 
+    /// Low-cut slope for the left channel (1–100 dB/oct).
+    /// Default: 12 dB/oct.
+    #[id = "lcsl"]
+    pub low_cut_slope_l: FloatParam,
+
+    /// Low-cut slope for the right channel (1–100 dB/oct).
+    /// Default: 12 dB/oct.
+    #[id = "lcsr"]
+    pub low_cut_slope_r: FloatParam,
+
     /// High-cut (low-pass) frequency for the left channel (20–20 000 Hz).
     /// Default: 20 000 Hz (effectively off).
     #[id = "hcl"]
@@ -526,6 +558,16 @@ pub struct NebulaStereoDelayParams {
     /// Default: 20 000 Hz.
     #[id = "hcr"]
     pub high_cut_r: FloatParam,
+
+    /// High-cut slope for the left channel (1–100 dB/oct).
+    /// Default: 12 dB/oct.
+    #[id = "hcsl"]
+    pub high_cut_slope_l: FloatParam,
+
+    /// High-cut slope for the right channel (1–100 dB/oct).
+    /// Default: 12 dB/oct.
+    #[id = "hcsr"]
+    pub high_cut_slope_r: FloatParam,
 
     // ── Per-Channel: Feedback ────────────────────────────────────────────
     /// Feedback amount for the left channel (0.0–1.0). Default: 0.4 (40%).
@@ -651,7 +693,7 @@ impl Default for NebulaStereoDelayParams {
             .with_step_size(0.001)
             .with_value_to_string(Arc::new(format_delay_time))
             .with_string_to_value(Arc::new(parse_delay_time))
-            .with_unit(" s"),
+            .with_unit(" ms"),
 
             delay_time_r: FloatParam::new(
                 "Delay Time R",
@@ -665,7 +707,7 @@ impl Default for NebulaStereoDelayParams {
             .with_step_size(0.001)
             .with_value_to_string(Arc::new(format_delay_time))
             .with_string_to_value(Arc::new(parse_delay_time))
-            .with_unit(" s"),
+            .with_unit(" ms"),
 
             // ══════════════════════════════════════════════════════════
             // Per-Channel: Tempo-Sync Note
@@ -790,6 +832,34 @@ impl Default for NebulaStereoDelayParams {
             .with_string_to_value(Arc::new(parse_frequency))
             .with_unit(" Hz"),
 
+            low_cut_slope_l: FloatParam::new(
+                "Low Cut Slope L",
+                12.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 100.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.1)
+            .with_value_to_string(Arc::new(format_slope))
+            .with_string_to_value(Arc::new(parse_slope))
+            .with_unit(" dB/oct"),
+
+            low_cut_slope_r: FloatParam::new(
+                "Low Cut Slope R",
+                12.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 100.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.1)
+            .with_value_to_string(Arc::new(format_slope))
+            .with_string_to_value(Arc::new(parse_slope))
+            .with_unit(" dB/oct"),
+
             high_cut_l: FloatParam::new(
                 "High Cut L",
                 20000.0,
@@ -817,6 +887,34 @@ impl Default for NebulaStereoDelayParams {
             .with_value_to_string(Arc::new(format_frequency))
             .with_string_to_value(Arc::new(parse_frequency))
             .with_unit(" Hz"),
+
+            high_cut_slope_l: FloatParam::new(
+                "High Cut Slope L",
+                12.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 100.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.1)
+            .with_value_to_string(Arc::new(format_slope))
+            .with_string_to_value(Arc::new(parse_slope))
+            .with_unit(" dB/oct"),
+
+            high_cut_slope_r: FloatParam::new(
+                "High Cut Slope R",
+                12.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 100.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.1)
+            .with_value_to_string(Arc::new(format_slope))
+            .with_string_to_value(Arc::new(parse_slope))
+            .with_unit(" dB/oct"),
 
             // ══════════════════════════════════════════════════════════
             // Per-Channel: Feedback
@@ -1007,8 +1105,12 @@ impl NebulaStereoDelayParams {
             double_r: self.double_r.value(),
             low_cut_l: self.low_cut_l.value(),
             low_cut_r: self.low_cut_r.value(),
+            low_cut_slope_l: self.low_cut_slope_l.value(),
+            low_cut_slope_r: self.low_cut_slope_r.value(),
             high_cut_l: self.high_cut_l.value(),
             high_cut_r: self.high_cut_r.value(),
+            high_cut_slope_l: self.high_cut_slope_l.value(),
+            high_cut_slope_r: self.high_cut_slope_r.value(),
             feedback_l: self.feedback_l.value(),
             feedback_r: self.feedback_r.value(),
             feedback_phase_l: self.feedback_phase_l.value(),
@@ -1052,8 +1154,12 @@ impl NebulaStereoDelayParams {
         setter.set_parameter(&self.deviation_r, snapshot.deviation_r);
         setter.set_parameter(&self.low_cut_l, snapshot.low_cut_l);
         setter.set_parameter(&self.low_cut_r, snapshot.low_cut_r);
+        setter.set_parameter(&self.low_cut_slope_l, snapshot.low_cut_slope_l);
+        setter.set_parameter(&self.low_cut_slope_r, snapshot.low_cut_slope_r);
         setter.set_parameter(&self.high_cut_l, snapshot.high_cut_l);
         setter.set_parameter(&self.high_cut_r, snapshot.high_cut_r);
+        setter.set_parameter(&self.high_cut_slope_l, snapshot.high_cut_slope_l);
+        setter.set_parameter(&self.high_cut_slope_r, snapshot.high_cut_slope_r);
         setter.set_parameter(&self.feedback_l, snapshot.feedback_l);
         setter.set_parameter(&self.feedback_r, snapshot.feedback_r);
         setter.set_parameter(&self.crossfeed_lr, snapshot.crossfeed_lr);
@@ -1224,8 +1330,12 @@ impl NebulaStereoDelayParams {
             delay_time_r: self.delay_time_r.value() as f64,
             low_cut_l: self.low_cut_l.value() as f64,
             low_cut_r: self.low_cut_r.value() as f64,
+            low_cut_slope_l: self.low_cut_slope_l.value() as f64,
+            low_cut_slope_r: self.low_cut_slope_r.value() as f64,
             high_cut_l: self.high_cut_l.value() as f64,
             high_cut_r: self.high_cut_r.value() as f64,
+            high_cut_slope_l: self.high_cut_slope_l.value() as f64,
+            high_cut_slope_r: self.high_cut_slope_r.value() as f64,
             feedback_l: self.feedback_l.value() as f64,
             feedback_r: self.feedback_r.value() as f64,
             feedback_phase_l: self.feedback_phase_l.value(),
@@ -1340,14 +1450,15 @@ mod tests {
 
     #[test]
     fn format_delay_time_values() {
-        assert_eq!(format_delay_time(0.5), "0.500");
-        assert_eq!(format_delay_time(0.01), "0.010");
-        assert_eq!(format_delay_time(10.0), "10.000");
+        assert_eq!(format_delay_time(0.5), "500.0");
+        assert_eq!(format_delay_time(0.01), "10.0");
+        assert_eq!(format_delay_time(10.0), "10000.0");
     }
 
     #[test]
     fn parse_delay_time_values() {
-        assert_eq!(parse_delay_time("0.500"), Some(0.5));
+        assert_eq!(parse_delay_time("500"), Some(0.5));
+        assert_eq!(parse_delay_time("500 ms"), Some(0.5));
         assert_eq!(parse_delay_time("0.500 s"), Some(0.5));
         assert_eq!(parse_delay_time("10.0s"), Some(10.0));
     }

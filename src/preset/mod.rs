@@ -133,8 +133,16 @@ pub struct PresetValues {
     // ── Per-Channel: Filters (Hz) ──────────────────────────────────────
     pub low_cut_l: f32,
     pub low_cut_r: f32,
+    #[serde(default = "default_filter_slope")]
+    pub low_cut_slope_l: f32,
+    #[serde(default = "default_filter_slope")]
+    pub low_cut_slope_r: f32,
     pub high_cut_l: f32,
     pub high_cut_r: f32,
+    #[serde(default = "default_filter_slope")]
+    pub high_cut_slope_l: f32,
+    #[serde(default = "default_filter_slope")]
+    pub high_cut_slope_r: f32,
 
     // ── Per-Channel: Feedback (0.0–1.0) ────────────────────────────────
     pub feedback_l: f32,
@@ -172,8 +180,12 @@ impl Default for PresetValues {
             double_r: false,
             low_cut_l: 20.0,
             low_cut_r: 20.0,
+            low_cut_slope_l: 12.0,
+            low_cut_slope_r: 12.0,
             high_cut_l: 20000.0,
             high_cut_r: 20000.0,
+            high_cut_slope_l: 12.0,
+            high_cut_slope_r: 12.0,
             feedback_l: 0.4,
             feedback_r: 0.4,
             feedback_phase_l: false,
@@ -188,6 +200,10 @@ impl Default for PresetValues {
             output_mix_r: 1.0,
         }
     }
+}
+
+fn default_filter_slope() -> f32 {
+    12.0
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -345,8 +361,12 @@ impl PresetManager {
         // ── Filters ─────────────────────────────────────────────────
         setter.set_parameter(&params.low_cut_l, v.low_cut_l);
         setter.set_parameter(&params.low_cut_r, v.low_cut_r);
+        setter.set_parameter(&params.low_cut_slope_l, v.low_cut_slope_l);
+        setter.set_parameter(&params.low_cut_slope_r, v.low_cut_slope_r);
         setter.set_parameter(&params.high_cut_l, v.high_cut_l);
         setter.set_parameter(&params.high_cut_r, v.high_cut_r);
+        setter.set_parameter(&params.high_cut_slope_l, v.high_cut_slope_l);
+        setter.set_parameter(&params.high_cut_slope_r, v.high_cut_slope_r);
 
         // ── Feedback ────────────────────────────────────────────────
         setter.set_parameter(&params.feedback_l, v.feedback_l);
@@ -476,8 +496,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 20.0,
                 low_cut_r: 20.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 20000.0,
                 high_cut_r: 20000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.4,
                 feedback_r: 0.4,
                 feedback_phase_l: false,
@@ -516,8 +540,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 20.0,
                 low_cut_r: 20.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 20000.0,
                 high_cut_r: 20000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.0, // No feedback — single repeat only
                 feedback_r: 0.0,
                 feedback_phase_l: false,
@@ -557,8 +585,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 250.0, // Aggressive low-cut to prevent mud
                 low_cut_r: 250.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 6000.0, // Soft high-cut for warmth
                 high_cut_r: 6000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.72, // High feedback — long tail
                 feedback_r: 0.72,
                 feedback_phase_l: false,
@@ -598,8 +630,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 100.0, // Gentle low-cut
                 low_cut_r: 100.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 10000.0,
                 high_cut_r: 10000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.55,
                 feedback_r: 0.55,
                 feedback_phase_l: false,
@@ -639,8 +675,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 80.0,
                 low_cut_r: 80.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 8000.0, // Band-limited for speaker simulation
                 high_cut_r: 8000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.5,
                 feedback_r: 0.5,
                 feedback_phase_l: false,
@@ -680,8 +720,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 80.0, // Remove sub build-up
                 low_cut_r: 80.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 12000.0,
                 high_cut_r: 12000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.0, // No feedback — keep it tight
                 feedback_r: 0.0,
                 feedback_phase_l: false,
@@ -723,8 +767,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 120.0, // Tape rolls off low end
                 low_cut_r: 120.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 4500.0, // Tape significantly rolls off highs
                 high_cut_r: 4500.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.55, // Moderate feedback for trailing repeats
                 feedback_r: 0.55,
                 feedback_phase_l: false,
@@ -765,8 +813,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 120.0, // Remove low-frequency mono content
                 low_cut_r: 120.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 9000.0, // Gentle high-cut for smooth blend
                 high_cut_r: 9000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.15, // Low feedback — just a hint of repeat
                 feedback_r: 0.15,
                 feedback_phase_l: false,
@@ -807,8 +859,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 150.0, // Cut lows to keep rhythm tight
                 low_cut_r: 150.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 7000.0,
                 high_cut_r: 7000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.5, // Enough repeats to establish the rhythm
                 feedback_r: 0.45,
                 feedback_phase_l: false,
@@ -849,8 +905,12 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 200.0, // Aggressive low-cut — old tape has no subs
                 low_cut_r: 200.0,
+                low_cut_slope_l: 12.0,
+                low_cut_slope_r: 12.0,
                 high_cut_l: 3000.0, // Dark — aged tape rolls off highs severely
                 high_cut_r: 3000.0,
+                high_cut_slope_l: 12.0,
+                high_cut_slope_r: 12.0,
                 feedback_l: 0.6, // Moderate-high feedback for decaying tape repeats
                 feedback_r: 0.6,
                 feedback_phase_l: false,

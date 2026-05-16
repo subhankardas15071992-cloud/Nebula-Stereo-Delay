@@ -2,7 +2,7 @@
 //!
 //! This crate implements a professional stereo delay audio plugin built on
 //! [nih-plug](https://github.com/robbert-vdh/nih-plug). It exports CLAP and
-//! VST3 plugin formats.
+//! VST3 plugin formats on macOS/Linux, and VST3 only on Windows.
 //!
 //! # Architecture
 //!
@@ -35,13 +35,13 @@
 //!
 //! | Format   | Export Macro                     | Platform             |
 //! |----------|----------------------------------|----------------------|
-//! | CLAP     | `nih_export_clap!`               | Linux, macOS, Windows|
+//! | CLAP     | `nih_export_clap!`               | Linux, macOS         |
 //! | VST3     | `nih_export_vst3!`               | Linux, macOS, Windows|
 
 /// DSP engine — always available (no plugin dependency).
 pub mod dsp;
 
-#[cfg(feature = "plugin")]
+#[cfg(all(feature = "plugin", feature = "gui", not(target_os = "windows")))]
 pub mod gui;
 #[cfg(feature = "plugin")]
 pub mod midi;
@@ -82,6 +82,110 @@ const DENORMAL_THRESHOLD_F32: f32 = 1e-30;
 #[cfg(feature = "plugin")]
 const DEFAULT_TEMPO_BPM: f64 = 120.0;
 
+const MIDI_TARGET_COUNT: usize = 32;
+
+#[derive(Debug, Clone, Copy)]
+#[repr(usize)]
+enum MidiTarget {
+    InputModeL,
+    InputModeR,
+    DelayTimeL,
+    DelayTimeR,
+    NoteL,
+    NoteR,
+    DeviationL,
+    DeviationR,
+    HalveL,
+    HalveR,
+    DoubleL,
+    DoubleR,
+    LowCutL,
+    LowCutR,
+    LowCutSlopeL,
+    LowCutSlopeR,
+    HighCutL,
+    HighCutR,
+    HighCutSlopeL,
+    HighCutSlopeR,
+    FeedbackL,
+    FeedbackR,
+    FeedbackPhaseL,
+    FeedbackPhaseR,
+    CrossfeedLr,
+    CrossfeedRl,
+    CrossfeedPhase,
+    Routing,
+    TempoSync,
+    StereoLink,
+    OutputMixL,
+    OutputMixR,
+}
+
+impl MidiTarget {
+    fn from_param_id(param_id: &str) -> Option<Self> {
+        match param_id {
+            "input_mode_l" => Some(Self::InputModeL),
+            "input_mode_r" => Some(Self::InputModeR),
+            "delay_time_l" => Some(Self::DelayTimeL),
+            "delay_time_r" => Some(Self::DelayTimeR),
+            "note_l" => Some(Self::NoteL),
+            "note_r" => Some(Self::NoteR),
+            "deviation_l" => Some(Self::DeviationL),
+            "deviation_r" => Some(Self::DeviationR),
+            "halve_l" => Some(Self::HalveL),
+            "halve_r" => Some(Self::HalveR),
+            "double_l" => Some(Self::DoubleL),
+            "double_r" => Some(Self::DoubleR),
+            "low_cut_l" => Some(Self::LowCutL),
+            "low_cut_r" => Some(Self::LowCutR),
+            "low_cut_slope_l" => Some(Self::LowCutSlopeL),
+            "low_cut_slope_r" => Some(Self::LowCutSlopeR),
+            "high_cut_l" => Some(Self::HighCutL),
+            "high_cut_r" => Some(Self::HighCutR),
+            "high_cut_slope_l" => Some(Self::HighCutSlopeL),
+            "high_cut_slope_r" => Some(Self::HighCutSlopeR),
+            "feedback_l" => Some(Self::FeedbackL),
+            "feedback_r" => Some(Self::FeedbackR),
+            "feedback_phase_l" => Some(Self::FeedbackPhaseL),
+            "feedback_phase_r" => Some(Self::FeedbackPhaseR),
+            "crossfeed_l_r" => Some(Self::CrossfeedLr),
+            "crossfeed_r_l" => Some(Self::CrossfeedRl),
+            "crossfeed_phase" => Some(Self::CrossfeedPhase),
+            "routing" => Some(Self::Routing),
+            "tempo_sync" => Some(Self::TempoSync),
+            "stereo_link" => Some(Self::StereoLink),
+            "output_mix_l" => Some(Self::OutputMixL),
+            "output_mix_r" => Some(Self::OutputMixR),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MidiOverrides {
+    values: [Option<f32>; MIDI_TARGET_COUNT],
+}
+
+impl Default for MidiOverrides {
+    fn default() -> Self {
+        Self {
+            values: [None; MIDI_TARGET_COUNT],
+        }
+    }
+}
+
+impl MidiOverrides {
+    fn set_by_param_id(&mut self, param_id: &str, normalized: f32) {
+        if let Some(target) = MidiTarget::from_param_id(param_id) {
+            self.values[target as usize] = Some(normalized.clamp(0.0, 1.0));
+        }
+    }
+
+    fn get(&self, target: MidiTarget) -> Option<f32> {
+        self.values[target as usize]
+    }
+}
+
 #[cfg(feature = "plugin")]
 #[inline(always)]
 fn flush_denormal_f64(x: f64) -> f64 {
@@ -108,6 +212,7 @@ pub struct NebulaStereoDelay {
     engine: DelayEngine,
     state_manager: StateManager,
     midi_cc: MidiCcValues,
+    midi_overrides: MidiOverrides,
     _preset_manager: PresetManager,
     sample_rate: f64,
 }
@@ -123,6 +228,7 @@ impl Default for NebulaStereoDelay {
             engine: DelayEngine::new(sample_rate),
             params,
             midi_cc: MidiCcValues::new(),
+            midi_overrides: MidiOverrides::default(),
             _preset_manager: PresetManager::new(),
             sample_rate,
         }
@@ -153,13 +259,15 @@ impl Plugin for NebulaStereoDelay {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        #[cfg(target_os = "windows")]
+        #[cfg(all(feature = "gui", not(target_os = "windows")))]
+        {
+            gui::create_egui_editor(self.params.clone())
+        }
+
+        #[cfg(any(not(feature = "gui"), target_os = "windows"))]
         {
             None
         }
-
-        #[cfg(not(target_os = "windows"))]
-        gui::create_egui_editor(self.params.clone())
     }
 
     fn initialize(
@@ -192,24 +300,93 @@ impl Plugin for NebulaStereoDelay {
                 channel, cc, value, ..
             } = event
             {
-                self.midi_cc.set(channel, cc, value);
+                let mapped = self
+                    .params
+                    .midi_learn
+                    .try_write()
+                    .ok()
+                    .and_then(|mut learn| {
+                        learn.process_cc_event(channel, cc, value, &self.midi_cc)
+                    });
+
+                if let Some((param_id, normalized)) = mapped {
+                    self.midi_overrides.set_by_param_id(&param_id, normalized);
+                } else {
+                    self.midi_cc.set(channel, cc, value);
+                }
             }
         }
 
-        let input_mode_l = self.params.input_mode_l.value().into();
-        let input_mode_r = self.params.input_mode_r.value().into();
-        let feedback_phase_l = self.params.feedback_phase_l.value();
-        let feedback_phase_r = self.params.feedback_phase_r.value();
-        let crossfeed_phase = self.params.crossfeed_phase.value();
-        let routing = self.params.routing.value().into();
-        let tempo_sync = self.params.tempo_sync.value();
-        let note_l = self.params.note_l.value().into();
-        let note_r = self.params.note_r.value().into();
-        let halve_l = self.params.halve_l.value();
-        let halve_r = self.params.halve_r.value();
-        let double_l = self.params.double_l.value();
-        let double_r = self.params.double_r.value();
-        let stereo_link = self.params.stereo_link.value();
+        let input_mode_l = self
+            .midi_overrides
+            .get(MidiTarget::InputModeL)
+            .map(|v| self.params.input_mode_l.preview_plain(v).into())
+            .unwrap_or_else(|| self.params.input_mode_l.value().into());
+        let input_mode_r = self
+            .midi_overrides
+            .get(MidiTarget::InputModeR)
+            .map(|v| self.params.input_mode_r.preview_plain(v).into())
+            .unwrap_or_else(|| self.params.input_mode_r.value().into());
+        let feedback_phase_l = self
+            .midi_overrides
+            .get(MidiTarget::FeedbackPhaseL)
+            .map(|v| self.params.feedback_phase_l.preview_plain(v))
+            .unwrap_or_else(|| self.params.feedback_phase_l.value());
+        let feedback_phase_r = self
+            .midi_overrides
+            .get(MidiTarget::FeedbackPhaseR)
+            .map(|v| self.params.feedback_phase_r.preview_plain(v))
+            .unwrap_or_else(|| self.params.feedback_phase_r.value());
+        let crossfeed_phase = self
+            .midi_overrides
+            .get(MidiTarget::CrossfeedPhase)
+            .map(|v| self.params.crossfeed_phase.preview_plain(v))
+            .unwrap_or_else(|| self.params.crossfeed_phase.value());
+        let routing = self
+            .midi_overrides
+            .get(MidiTarget::Routing)
+            .map(|v| self.params.routing.preview_plain(v).into())
+            .unwrap_or_else(|| self.params.routing.value().into());
+        let tempo_sync = self
+            .midi_overrides
+            .get(MidiTarget::TempoSync)
+            .map(|v| self.params.tempo_sync.preview_plain(v))
+            .unwrap_or_else(|| self.params.tempo_sync.value());
+        let note_l = self
+            .midi_overrides
+            .get(MidiTarget::NoteL)
+            .map(|v| self.params.note_l.preview_plain(v).into())
+            .unwrap_or_else(|| self.params.note_l.value().into());
+        let note_r = self
+            .midi_overrides
+            .get(MidiTarget::NoteR)
+            .map(|v| self.params.note_r.preview_plain(v).into())
+            .unwrap_or_else(|| self.params.note_r.value().into());
+        let halve_l = self
+            .midi_overrides
+            .get(MidiTarget::HalveL)
+            .map(|v| self.params.halve_l.preview_plain(v))
+            .unwrap_or_else(|| self.params.halve_l.value());
+        let halve_r = self
+            .midi_overrides
+            .get(MidiTarget::HalveR)
+            .map(|v| self.params.halve_r.preview_plain(v))
+            .unwrap_or_else(|| self.params.halve_r.value());
+        let double_l = self
+            .midi_overrides
+            .get(MidiTarget::DoubleL)
+            .map(|v| self.params.double_l.preview_plain(v))
+            .unwrap_or_else(|| self.params.double_l.value());
+        let double_r = self
+            .midi_overrides
+            .get(MidiTarget::DoubleR)
+            .map(|v| self.params.double_r.preview_plain(v))
+            .unwrap_or_else(|| self.params.double_r.value());
+        let stereo_link = self
+            .midi_overrides
+            .get(MidiTarget::StereoLink)
+            .map(|v| self.params.stereo_link.preview_plain(v))
+            .unwrap_or_else(|| self.params.stereo_link.value());
 
         for mut sample in buffer.iter_samples() {
             let mut channels = sample.iter_mut();
@@ -220,35 +397,48 @@ impl Plugin for NebulaStereoDelay {
                 continue;
             };
 
+            macro_rules! midi_float {
+                ($target:expr, $param:ident) => {
+                    self.midi_overrides
+                        .get($target)
+                        .map(|v| self.params.$param.preview_plain(v) as f64)
+                        .unwrap_or_else(|| self.params.$param.smoothed.next() as f64)
+                };
+            }
+
             let delay_params = dsp::DelayParams {
                 input_mode_l,
                 input_mode_r,
-                delay_time_l: self.params.delay_time_l.smoothed.next() as f64,
-                delay_time_r: self.params.delay_time_r.smoothed.next() as f64,
-                low_cut_l: self.params.low_cut_l.smoothed.next() as f64,
-                low_cut_r: self.params.low_cut_r.smoothed.next() as f64,
-                high_cut_l: self.params.high_cut_l.smoothed.next() as f64,
-                high_cut_r: self.params.high_cut_r.smoothed.next() as f64,
-                feedback_l: self.params.feedback_l.smoothed.next() as f64,
-                feedback_r: self.params.feedback_r.smoothed.next() as f64,
+                delay_time_l: midi_float!(MidiTarget::DelayTimeL, delay_time_l),
+                delay_time_r: midi_float!(MidiTarget::DelayTimeR, delay_time_r),
+                low_cut_l: midi_float!(MidiTarget::LowCutL, low_cut_l),
+                low_cut_r: midi_float!(MidiTarget::LowCutR, low_cut_r),
+                low_cut_slope_l: midi_float!(MidiTarget::LowCutSlopeL, low_cut_slope_l),
+                low_cut_slope_r: midi_float!(MidiTarget::LowCutSlopeR, low_cut_slope_r),
+                high_cut_l: midi_float!(MidiTarget::HighCutL, high_cut_l),
+                high_cut_r: midi_float!(MidiTarget::HighCutR, high_cut_r),
+                high_cut_slope_l: midi_float!(MidiTarget::HighCutSlopeL, high_cut_slope_l),
+                high_cut_slope_r: midi_float!(MidiTarget::HighCutSlopeR, high_cut_slope_r),
+                feedback_l: midi_float!(MidiTarget::FeedbackL, feedback_l),
+                feedback_r: midi_float!(MidiTarget::FeedbackR, feedback_r),
                 feedback_phase_l,
                 feedback_phase_r,
-                crossfeed_lr: self.params.crossfeed_lr.smoothed.next() as f64,
-                crossfeed_rl: self.params.crossfeed_rl.smoothed.next() as f64,
+                crossfeed_lr: midi_float!(MidiTarget::CrossfeedLr, crossfeed_lr),
+                crossfeed_rl: midi_float!(MidiTarget::CrossfeedRl, crossfeed_rl),
                 crossfeed_phase,
                 routing,
                 tempo_sync,
                 tempo_bpm,
                 note_l,
                 note_r,
-                deviation_l: self.params.deviation_l.smoothed.next() as f64,
-                deviation_r: self.params.deviation_r.smoothed.next() as f64,
+                deviation_l: midi_float!(MidiTarget::DeviationL, deviation_l),
+                deviation_r: midi_float!(MidiTarget::DeviationR, deviation_r),
                 halve_l,
                 halve_r,
                 double_l,
                 double_r,
-                output_mix_l: self.params.output_mix_l.smoothed.next() as f64,
-                output_mix_r: self.params.output_mix_r.smoothed.next() as f64,
+                output_mix_l: midi_float!(MidiTarget::OutputMixL, output_mix_l),
+                output_mix_r: midi_float!(MidiTarget::OutputMixR, output_mix_r),
                 bypass: soft_bypass,
                 stereo_link,
             };
@@ -275,7 +465,7 @@ impl Plugin for NebulaStereoDelay {
     }
 }
 
-#[cfg(feature = "plugin")]
+#[cfg(all(feature = "plugin", not(target_os = "windows")))]
 impl ClapPlugin for NebulaStereoDelay {
     const CLAP_ID: &'static str = "audio.nebula.stereo-delay";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Professional stereo delay audio effect");
@@ -298,7 +488,7 @@ impl Vst3Plugin for NebulaStereoDelay {
     ];
 }
 
-#[cfg(feature = "plugin")]
+#[cfg(all(feature = "plugin", not(target_os = "windows")))]
 nih_plug::nih_export_clap!(NebulaStereoDelay);
 
 #[cfg(feature = "plugin")]

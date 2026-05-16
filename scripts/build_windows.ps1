@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # Build script for Windows x86_64
-# Produces: CLAP, VST3
+# Produces: VST3
 # Requirements: Rust stable, MSVC build tools
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -75,7 +75,7 @@ Write-Step "Building release binary for $Target..."
 
 Push-Location $ProjectRoot
 try {
-    cargo build --release --target $Target
+    cargo build --release --target $Target --no-default-features --features plugin
     if ($LASTEXITCODE -ne 0) {
         Write-ErrMsg "Build failed with exit code $LASTEXITCODE"
         Pop-Location
@@ -101,23 +101,7 @@ if (-not (Test-Path $DllPath)) {
 $DllSize = (Get-Item $DllPath).Length / 1MB
 Write-Ok "DLL found: $DllPath ($($DllSize.ToString('F1')) MB)"
 
-# ── Step 4: Create CLAP bundle ────────────────────────────────────────────
-Write-Step "Creating CLAP bundle..."
-
-$ClapBundle = Join-Path $BuildDir "$PluginName.clap"
-
-if (Test-Path $ClapBundle) {
-    Remove-Item -Recurse -Force $ClapBundle
-}
-
-New-Item -ItemType Directory -Path $ClapBundle -Force | Out-Null
-
-$ClapBinary = Join-Path $ClapBundle "$PluginName.clap"
-
-Copy-Item -Path $DllPath -Destination $ClapBinary -Force
-Write-Ok "DLL copied to CLAP bundle"
-
-# ── Step 5: Create VST3 bundle directory structure ─────────────────────────
+# ── Step 4: Create VST3 bundle directory structure ─────────────────────────
 Write-Step "Creating VST3 bundle..."
 
 $Vst3Bundle = Join-Path $BuildDir "$PluginName.vst3"
@@ -161,19 +145,6 @@ Write-Step "Validating build artifacts..."
 
 $Valid = $true
 
-if (Test-Path $ClapBinary) {
-    $binaryInfo = [System.IO.FileInfo]::new($ClapBinary)
-    if ($binaryInfo.Length -gt 0) {
-        Write-Ok "CLAP binary: valid ($($binaryInfo.Length / 1MB).ToString('F1') MB)"
-    } else {
-        Write-ErrMsg "CLAP binary: empty file"
-        $Valid = $false
-    }
-} else {
-    Write-ErrMsg "CLAP binary: not found"
-    $Valid = $false
-}
-
 if (Test-Path $Vst3Binary) {
     $binaryInfo = [System.IO.FileInfo]::new($Vst3Binary)
     if ($binaryInfo.Length -gt 0) {
@@ -200,13 +171,9 @@ Write-Host "  Target:       $Target"
 Write-Host ""
 Write-Host "  Output directory: $BuildDir" -ForegroundColor White
 Write-Host ""
-Write-Host "  CLAP  ->  $ClapBundle" -ForegroundColor Green
 Write-Host "  VST3  ->  $Vst3Bundle" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Bundle structure:" -ForegroundColor White
-Write-Host "    $PluginName.clap\"
-Write-Host "      $PluginName.clap  (the DLL)"
-Write-Host ""
 Write-Host "    $PluginName.vst3\"
 Write-Host "      Contents\"
 Write-Host "        x86_64-win\"
@@ -222,20 +189,12 @@ if ($Valid) {
 
 Write-Host ""
 Write-Host "  Install location:" -ForegroundColor White
-Write-Host "    CLAP:  %COMMONPROGRAMFILES%\CLAP\"
 Write-Host "    VST3:  %COMMONPROGRAMFILES%\VST3\"
 Write-Host ""
 
 # ── Optional install ──────────────────────────────────────────────────────
 if ($args.Count -gt 0 -and $args[0] -eq "--install") {
     Write-Step "Installing plugins..."
-
-    $ClapInstallDir = Join-Path $env:COMMONPROGRAMFILES "CLAP"
-    if (-not (Test-Path $ClapInstallDir)) {
-        New-Item -ItemType Directory -Path $ClapInstallDir -Force | Out-Null
-    }
-    Copy-Item -Recurse -Force $ClapBundle $ClapInstallDir
-    Write-Ok "CLAP installed to $ClapInstallDir"
 
     $Vst3InstallDir = Join-Path $env:COMMONPROGRAMFILES "VST3"
     if (-not (Test-Path $Vst3InstallDir)) {

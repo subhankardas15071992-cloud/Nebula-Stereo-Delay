@@ -18,16 +18,16 @@ name = "nebula_stereo_delay"
 crate-type = ["cdylib", "lib"]
 
 [features]
-default = ["plugin"]
+default = ["plugin", "gui"]
 plugin = [
     "dep:nih_plug",
-    "dep:nih_plug_egui",
     "dep:atomic_float",
     "dep:crossbeam",
     "dep:rustc-hash",
     "dep:serde",
     "dep:serde_json",
 ]
+gui = ["dep:nih_plug_egui"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", optional = true }

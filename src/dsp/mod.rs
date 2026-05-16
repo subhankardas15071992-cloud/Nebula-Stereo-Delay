@@ -13,7 +13,7 @@
 //!                                 Delay Line (cubic interp) ──► Filtered Signal (wet)
 //!                                      ▲                          │
 //!                                      │                          ▼
-//!                                      └──────── Feedback ◄─── Biquad Filters
+//!                                      └──────── Feedback ◄─── Complementary Filters
 //!                                                ▲
 //!                                                │
 //!                                           Routing Matrix
@@ -55,8 +55,11 @@ const BUFFER_MARGIN: usize = 8;
 /// modulate the stereo-panning angle.
 const ROTATE_LFO_HZ: f64 = 0.5;
 
-/// Butterworth Q for 12 dB/oct biquad filters (= 1/√2).
-const BUTTERWORTH_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
+/// One first-order complementary filter stage is 6 dB/oct.
+const FILTER_STAGE_SLOPE_DB: f64 = 6.0;
+
+/// Enough one-pole stages to cover the 1–100 dB/oct slope range.
+const MAX_FILTER_STAGES: usize = 17;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Public Enums
@@ -194,10 +197,18 @@ pub struct DelayParams {
     pub low_cut_l: f64,
     /// Low-cut (high-pass) frequency for the right channel.
     pub low_cut_r: f64,
+    /// Low-cut slope for the left channel. Range: 1–100 dB/oct.
+    pub low_cut_slope_l: f64,
+    /// Low-cut slope for the right channel. Range: 1–100 dB/oct.
+    pub low_cut_slope_r: f64,
     /// High-cut (low-pass) frequency for the left channel. Range: 20–20 000 Hz.
     pub high_cut_l: f64,
     /// High-cut (low-pass) frequency for the right channel.
     pub high_cut_r: f64,
+    /// High-cut slope for the left channel. Range: 1–100 dB/oct.
+    pub high_cut_slope_l: f64,
+    /// High-cut slope for the right channel. Range: 1–100 dB/oct.
+    pub high_cut_slope_r: f64,
 
     // ── Feedback ──────────────────────────────────────────────────────
     /// Feedback amount for the left channel (0.0 – 1.0).
@@ -271,8 +282,12 @@ impl Default for DelayParams {
             delay_time_r: 0.5,
             low_cut_l: 20.0,
             low_cut_r: 20.0,
+            low_cut_slope_l: 12.0,
+            low_cut_slope_r: 12.0,
             high_cut_l: 20000.0,
             high_cut_r: 20000.0,
+            high_cut_slope_l: 12.0,
+            high_cut_slope_r: 12.0,
             feedback_l: 0.4,
             feedback_r: 0.4,
             feedback_phase_l: false,
@@ -291,8 +306,8 @@ impl Default for DelayParams {
             halve_r: false,
             double_l: false,
             double_r: false,
-            output_mix_l: 0.5,
-            output_mix_r: 0.5,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
             bypass: false,
             stereo_link: false,
         }
@@ -529,131 +544,129 @@ impl DelayLine {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Internal: Biquad Filter
+// Internal: Complementary Variable-Slope Filter
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Filter type discriminator for coefficient calculation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BiquadKind {
-    /// 12 dB/octave low-pass.
+enum ComplementaryMode {
     LowPass,
-    /// 12 dB/octave high-pass.
     HighPass,
 }
 
-/// Second-order biquad filter operating entirely in `f64`.
-///
-/// Uses **Direct Form I** which is preferred for audio because it is
-/// numerically stable even at low frequencies and high sample rates
-/// (unlike Direct Form II which can suffer from coefficient
-/// quantisation).
-///
-/// Coefficients are derived from the *Audio EQ Cookbook* (R. Bristow-
-/// Johnson) for a Butterworth (maximally-flat) magnitude response.
-#[derive(Debug, Clone)]
-struct BiquadFilter {
-    // Normalised feed-forward coefficients (a0 = 1.0).
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    // Normalised feed-back coefficients (a0 = 1.0, sign-flipped).
-    a1: f64,
-    a2: f64,
-    // Direct-Form I state: previous inputs.
-    x1: f64,
-    x2: f64,
-    // Direct-Form I state: previous outputs.
-    y1: f64,
-    y2: f64,
+#[derive(Debug, Clone, Copy)]
+struct OnePoleLowPass {
+    a: f64,
+    z: f64,
 }
 
-impl BiquadFilter {
-    /// Create a unity-gain pass-through filter.
+impl OnePoleLowPass {
     fn new() -> Self {
-        Self {
-            b0: 1.0,
-            b1: 0.0,
-            b2: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
+        Self { a: 1.0, z: 0.0 }
     }
 
-    /// Recompute coefficients for the given filter kind and cutoff
-    /// frequency at the given sample rate.
-    ///
-    /// The cutoff is clamped to `(1 Hz, 0.499 × sample_rate)` so that
-    /// the bilinear transform remains stable.
-    fn update_coefficients(&mut self, kind: BiquadKind, cutoff_hz: f64, sample_rate: f64) {
+    fn set_cutoff(&mut self, cutoff_hz: f64, sample_rate: f64) {
         let safe_sr = sample_rate.max(1.0);
         let nyquist = safe_sr * 0.499;
         let fc = cutoff_hz.max(1.0).min(nyquist);
+        self.a = 1.0 - (-TAU * fc / safe_sr).exp();
+    }
 
-        let omega = TAU * fc / safe_sr;
-        let sin_w = omega.sin();
-        let cos_w = omega.cos();
-        let alpha = sin_w / (2.0 * BUTTERWORTH_Q);
+    #[inline]
+    fn process(&mut self, input: f64) -> f64 {
+        self.z += self.a * (input - self.z);
+        self.z
+    }
 
-        match kind {
-            BiquadKind::HighPass => {
-                let b0 = (1.0 + cos_w) * 0.5;
-                let b1 = -(1.0 + cos_w);
-                let b2 = (1.0 + cos_w) * 0.5;
-                let a0 = 1.0 + alpha;
-                let a1 = -2.0 * cos_w;
-                let a2 = 1.0 - alpha;
-                self.b0 = b0 / a0;
-                self.b1 = b1 / a0;
-                self.b2 = b2 / a0;
-                self.a1 = a1 / a0;
-                self.a2 = a2 / a0;
+    fn reset(&mut self) {
+        self.z = 0.0;
+    }
+}
+
+/// Cascaded one-pole complementary filter with continuously variable slope.
+///
+/// Every stage computes `lo = LP(x)` and `hi = x - lo`. The high-pass and
+/// low-pass outputs therefore recombine to the exact input at every sample.
+/// The continuous 1–100 dB/oct slope control is implemented by cascading full
+/// 6 dB/oct stages and blending the next fractional stage.
+#[derive(Debug, Clone)]
+struct ComplementaryFilter {
+    stages: [OnePoleLowPass; MAX_FILTER_STAGES],
+    order: f64,
+    cutoff_hz: f64,
+    sample_rate: f64,
+}
+
+impl ComplementaryFilter {
+    fn new() -> Self {
+        Self {
+            stages: [OnePoleLowPass::new(); MAX_FILTER_STAGES],
+            order: 2.0,
+            cutoff_hz: 20.0,
+            sample_rate: 0.0,
+        }
+    }
+
+    fn update(&mut self, cutoff_hz: f64, slope_db_oct: f64, sample_rate: f64) {
+        let cutoff_hz = cutoff_hz.clamp(20.0, 20000.0);
+        let sample_rate = sample_rate.max(1.0);
+        if (cutoff_hz - self.cutoff_hz).abs() > f64::EPSILON
+            || (sample_rate - self.sample_rate).abs() > f64::EPSILON
+        {
+            for stage in &mut self.stages {
+                stage.set_cutoff(cutoff_hz, sample_rate);
             }
-            BiquadKind::LowPass => {
-                let b0 = (1.0 - cos_w) * 0.5;
-                let b1 = 1.0 - cos_w;
-                let b2 = (1.0 - cos_w) * 0.5;
-                let a0 = 1.0 + alpha;
-                let a1 = -2.0 * cos_w;
-                let a2 = 1.0 - alpha;
-                self.b0 = b0 / a0;
-                self.b1 = b1 / a0;
-                self.b2 = b2 / a0;
-                self.a1 = a1 / a0;
-                self.a2 = a2 / a0;
+            self.cutoff_hz = cutoff_hz;
+            self.sample_rate = sample_rate;
+        }
+        self.order = (slope_db_oct.clamp(1.0, 100.0) / FILTER_STAGE_SLOPE_DB)
+            .clamp(1.0 / FILTER_STAGE_SLOPE_DB, MAX_FILTER_STAGES as f64);
+    }
+
+    #[inline]
+    fn process(&mut self, input: f64, mode: ComplementaryMode) -> f64 {
+        if mode == ComplementaryMode::LowPass && self.cutoff_hz >= 19_999.999 {
+            return input;
+        }
+
+        let full_stages = self.order.floor() as usize;
+        let fractional = self.order - full_stages as f64;
+
+        match mode {
+            ComplementaryMode::LowPass => {
+                let mut low = input;
+                for stage in self.stages.iter_mut().take(full_stages) {
+                    low = stage.process(low);
+                }
+
+                if fractional > 0.000_001 && full_stages < MAX_FILTER_STAGES {
+                    let next_low = self.stages[full_stages].process(low);
+                    low += (next_low - low) * fractional;
+                }
+
+                low
+            }
+            ComplementaryMode::HighPass => {
+                let mut high = input;
+                for stage in self.stages.iter_mut().take(full_stages) {
+                    let low = stage.process(high);
+                    high -= low;
+                }
+
+                if fractional > 0.000_001 && full_stages < MAX_FILTER_STAGES {
+                    let low = self.stages[full_stages].process(high);
+                    let next_high = high - low;
+                    high += (next_high - high) * fractional;
+                }
+
+                high
             }
         }
     }
 
-    /// Process a single `f64` sample through the filter.
-    ///
-    /// Difference equation (Direct Form I, a0 normalised to 1):
-    ///
-    /// ```text
-    /// y[n] = b0·x[n] + b1·x[n-1] + b2·x[n-2]
-    ///       - a1·y[n-1] - a2·y[n-2]
-    /// ```
-    #[inline]
-    fn process(&mut self, input: f64) -> f64 {
-        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1
-            - self.a2 * self.y2;
-        self.x2 = self.x1;
-        self.x1 = input;
-        self.y2 = self.y1;
-        self.y1 = output;
-        output
-    }
-
-    /// Clear all internal state (coefficients are left untouched).
     fn reset(&mut self) {
-        self.x1 = 0.0;
-        self.x2 = 0.0;
-        self.y1 = 0.0;
-        self.y2 = 0.0;
+        for stage in &mut self.stages {
+            stage.reset();
+        }
     }
 }
 
@@ -697,19 +710,23 @@ pub struct DelayEngine {
     delay_l: DelayLine,
     delay_r: DelayLine,
 
-    // ── Biquad filters: low-cut (HP) and high-cut (LP) per channel ───
-    low_cut_l: BiquadFilter,
-    low_cut_r: BiquadFilter,
-    high_cut_l: BiquadFilter,
-    high_cut_r: BiquadFilter,
+    // ── Complementary filters: low-cut (HP) and high-cut (LP) per channel ───
+    low_cut_l: ComplementaryFilter,
+    low_cut_r: ComplementaryFilter,
+    high_cut_l: ComplementaryFilter,
+    high_cut_r: ComplementaryFilter,
 
     // ── Smoothed parameters (anti-zipper noise) ───────────────────────
     smooth_delay_l: SmoothedValue,
     smooth_delay_r: SmoothedValue,
     smooth_low_cut_l: SmoothedValue,
     smooth_low_cut_r: SmoothedValue,
+    smooth_low_cut_slope_l: SmoothedValue,
+    smooth_low_cut_slope_r: SmoothedValue,
     smooth_high_cut_l: SmoothedValue,
     smooth_high_cut_r: SmoothedValue,
+    smooth_high_cut_slope_l: SmoothedValue,
+    smooth_high_cut_slope_r: SmoothedValue,
     smooth_feedback_l: SmoothedValue,
     smooth_feedback_r: SmoothedValue,
     smooth_crossfeed_lr: SmoothedValue,
@@ -773,16 +790,20 @@ impl DelayEngine {
             sample_rate: sr,
             delay_l: DelayLine::new(alloc_sr, sr),
             delay_r: DelayLine::new(alloc_sr, sr),
-            low_cut_l: BiquadFilter::new(),
-            low_cut_r: BiquadFilter::new(),
-            high_cut_l: BiquadFilter::new(),
-            high_cut_r: BiquadFilter::new(),
+            low_cut_l: ComplementaryFilter::new(),
+            low_cut_r: ComplementaryFilter::new(),
+            high_cut_l: ComplementaryFilter::new(),
+            high_cut_r: ComplementaryFilter::new(),
             smooth_delay_l: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             smooth_delay_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             smooth_low_cut_l: SmoothedValue::new(20.0, SMOOTH_SAMPLES),
             smooth_low_cut_r: SmoothedValue::new(20.0, SMOOTH_SAMPLES),
+            smooth_low_cut_slope_l: SmoothedValue::new(12.0, SMOOTH_SAMPLES),
+            smooth_low_cut_slope_r: SmoothedValue::new(12.0, SMOOTH_SAMPLES),
             smooth_high_cut_l: SmoothedValue::new(20000.0, SMOOTH_SAMPLES),
             smooth_high_cut_r: SmoothedValue::new(20000.0, SMOOTH_SAMPLES),
+            smooth_high_cut_slope_l: SmoothedValue::new(12.0, SMOOTH_SAMPLES),
+            smooth_high_cut_slope_r: SmoothedValue::new(12.0, SMOOTH_SAMPLES),
             smooth_feedback_l: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
             smooth_feedback_r: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
             smooth_crossfeed_lr: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
@@ -824,8 +845,16 @@ impl DelayEngine {
         self.smooth_delay_r.reset(self.smooth_delay_r.target);
         self.smooth_low_cut_l.reset(self.smooth_low_cut_l.target);
         self.smooth_low_cut_r.reset(self.smooth_low_cut_r.target);
+        self.smooth_low_cut_slope_l
+            .reset(self.smooth_low_cut_slope_l.target);
+        self.smooth_low_cut_slope_r
+            .reset(self.smooth_low_cut_slope_r.target);
         self.smooth_high_cut_l.reset(self.smooth_high_cut_l.target);
         self.smooth_high_cut_r.reset(self.smooth_high_cut_r.target);
+        self.smooth_high_cut_slope_l
+            .reset(self.smooth_high_cut_slope_l.target);
+        self.smooth_high_cut_slope_r
+            .reset(self.smooth_high_cut_slope_r.target);
         self.smooth_feedback_l.reset(self.smooth_feedback_l.target);
         self.smooth_feedback_r.reset(self.smooth_feedback_r.target);
         self.smooth_crossfeed_lr
@@ -865,7 +894,9 @@ impl DelayEngine {
                 input_mode_r: params.input_mode_l,
                 delay_time_r: params.delay_time_l,
                 low_cut_r: params.low_cut_l,
+                low_cut_slope_r: params.low_cut_slope_l,
                 high_cut_r: params.high_cut_l,
+                high_cut_slope_r: params.high_cut_slope_l,
                 feedback_r: params.feedback_l,
                 feedback_phase_r: params.feedback_phase_l,
                 crossfeed_rl: params.crossfeed_lr, // symmetric
@@ -911,10 +942,18 @@ impl DelayEngine {
             .set_target(p.low_cut_l.clamp(20.0, 20000.0));
         self.smooth_low_cut_r
             .set_target(p.low_cut_r.clamp(20.0, 20000.0));
+        self.smooth_low_cut_slope_l
+            .set_target(p.low_cut_slope_l.clamp(1.0, 100.0));
+        self.smooth_low_cut_slope_r
+            .set_target(p.low_cut_slope_r.clamp(1.0, 100.0));
         self.smooth_high_cut_l
             .set_target(p.high_cut_l.clamp(20.0, 20000.0));
         self.smooth_high_cut_r
             .set_target(p.high_cut_r.clamp(20.0, 20000.0));
+        self.smooth_high_cut_slope_l
+            .set_target(p.high_cut_slope_l.clamp(1.0, 100.0));
+        self.smooth_high_cut_slope_r
+            .set_target(p.high_cut_slope_r.clamp(1.0, 100.0));
         self.smooth_feedback_l
             .set_target(p.feedback_l.clamp(0.0, 1.0));
         self.smooth_feedback_r
@@ -936,8 +975,12 @@ impl DelayEngine {
         let s_delay_r = self.smooth_delay_r.next();
         let s_lc_l = self.smooth_low_cut_l.next();
         let s_lc_r = self.smooth_low_cut_r.next();
+        let s_lcs_l = self.smooth_low_cut_slope_l.next();
+        let s_lcs_r = self.smooth_low_cut_slope_r.next();
         let s_hc_l = self.smooth_high_cut_l.next();
         let s_hc_r = self.smooth_high_cut_r.next();
+        let s_hcs_l = self.smooth_high_cut_slope_l.next();
+        let s_hcs_r = self.smooth_high_cut_slope_r.next();
         let s_fb_l = self.smooth_feedback_l.next();
         let s_fb_r = self.smooth_feedback_r.next();
         let s_cf_lr = self.smooth_crossfeed_lr.next();
@@ -946,23 +989,21 @@ impl DelayEngine {
         let s_mix_r = self.smooth_mix_r.next();
         let s_bypass = self.bypass_gain.next();
 
-        // ── 6. Update biquad coefficients from smoothed cutoffs ───────
-        self.low_cut_l
-            .update_coefficients(BiquadKind::HighPass, s_lc_l, self.sample_rate);
-        self.low_cut_r
-            .update_coefficients(BiquadKind::HighPass, s_lc_r, self.sample_rate);
-        self.high_cut_l
-            .update_coefficients(BiquadKind::LowPass, s_hc_l, self.sample_rate);
-        self.high_cut_r
-            .update_coefficients(BiquadKind::LowPass, s_hc_r, self.sample_rate);
+        // ── 6. Update complementary filters from smoothed cutoffs/slopes ─────
+        self.low_cut_l.update(s_lc_l, s_lcs_l, self.sample_rate);
+        self.low_cut_r.update(s_lc_r, s_lcs_r, self.sample_rate);
+        self.high_cut_l.update(s_hc_l, s_hcs_l, self.sample_rate);
+        self.high_cut_r.update(s_hc_r, s_hcs_r, self.sample_rate);
 
         // ── 7. Read from delay lines (cubic interpolation) ────────────
         let raw_l = self.delay_l.read(s_delay_l);
         let raw_r = self.delay_r.read(s_delay_r);
 
-        // ── 8. Apply biquad filters (low-cut then high-cut) ───────────
-        let filt_l = self.high_cut_l.process(self.low_cut_l.process(raw_l));
-        let filt_r = self.high_cut_r.process(self.low_cut_r.process(raw_r));
+        // ── 8. Apply complementary filters (HPF then LPF) ────────────
+        let hp_l = self.low_cut_l.process(raw_l, ComplementaryMode::HighPass);
+        let hp_r = self.low_cut_r.process(raw_r, ComplementaryMode::HighPass);
+        let filt_l = self.high_cut_l.process(hp_l, ComplementaryMode::LowPass);
+        let filt_r = self.high_cut_r.process(hp_r, ComplementaryMode::LowPass);
 
         // ── 9. Compute phase-inversion sign bits ──────────────────────
         let sign_l: f64 = if p.feedback_phase_l { -1.0 } else { 1.0 };
@@ -1279,16 +1320,16 @@ mod tests {
         assert!((val - 30.0).abs() < 1e-6, "expected ~30.0, got {val}");
     }
 
-    // ── BiquadFilter ──────────────────────────────────────────────────
+    // ── ComplementaryFilter ───────────────────────────────────────────
 
     #[test]
-    fn biquad_passes_dc_when_lowpass_at_nyquist() {
-        let mut bq = BiquadFilter::new();
-        bq.update_coefficients(BiquadKind::LowPass, 20000.0, 44100.0);
+    fn complementary_lowpass_passes_dc() {
+        let mut filter = ComplementaryFilter::new();
+        filter.update(20000.0, 12.0, 44100.0);
         // A low-pass well above the signal frequency should pass DC.
         let mut out = 0.0;
         for _ in 0..1000 {
-            out = bq.process(1.0);
+            out = filter.process(1.0, ComplementaryMode::LowPass);
         }
         assert!(
             (out - 1.0).abs() < 0.01,
@@ -1297,15 +1338,33 @@ mod tests {
     }
 
     #[test]
-    fn biquad_rejects_dc_when_highpass_at_20hz() {
-        let mut bq = BiquadFilter::new();
-        bq.update_coefficients(BiquadKind::HighPass, 20.0, 44100.0);
-        // A high-pass at 20 Hz should reject DC (0 Hz).
+    fn complementary_highpass_rejects_dc() {
+        let mut filter = ComplementaryFilter::new();
+        filter.update(100.0, 12.0, 44100.0);
+        // An active high-pass should reject DC (0 Hz).
         let mut out = 1.0;
         for _ in 0..100_000 {
-            out = bq.process(1.0);
+            out = filter.process(1.0, ComplementaryMode::HighPass);
         }
         assert!(out.abs() < 0.01, "high-pass should reject DC, got {out}");
+    }
+
+    #[test]
+    fn complementary_outputs_recombine_exactly() {
+        let mut lp = ComplementaryFilter::new();
+        let mut hp = ComplementaryFilter::new();
+        lp.update(1000.0, 6.0, 44100.0);
+        hp.update(1000.0, 6.0, 44100.0);
+
+        for n in 0..2000 {
+            let x = ((n as f64) * 0.017).sin() * 0.7;
+            let lo = lp.process(x, ComplementaryMode::LowPass);
+            let hi = hp.process(x, ComplementaryMode::HighPass);
+            assert!(
+                ((lo + hi) - x).abs() < 1e-12,
+                "low+high should exactly recombine"
+            );
+        }
     }
 
     // ── DelayEngine integration ───────────────────────────────────────

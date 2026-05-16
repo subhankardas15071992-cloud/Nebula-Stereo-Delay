@@ -62,13 +62,13 @@ No mutexes on the audio thread. Peak meters use `AtomicU32` with `Relaxed` order
 Save two complete parameter snapshots and toggle between them with one click. Every parameter change is tracked in an undo stack 50 levels deep. Go back. Go forward. Experiment fearlessly.
 
 ### MIDI Learn
-Right-click any control to assign a MIDI CC. Learn mode listens for the next CC message and maps it instantly. Toggle MIDI on/off per parameter without losing the mapping. Roll back to a saved mapping state if you change your mind.
+Click MIDI, click a control, then move a MIDI controller. The next CC maps to that control. Right-click MIDI for global MIDI on/off, mapping cleanup, rollback, and save.
 
 ### Soft Bypass
 The FX bypass crossfades over 512 samples. No clicks. No pops. No hard cuts.
 
 ### Freely Scalable GUI
-Built with egui on macOS and Linux. The window starts at 1200x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark professional theme with a cyan accent palette matching the Nebula Audio family. Windows builds currently use the host's generic parameter editor for DAW stability.
+Built with egui on macOS and Linux. The window starts at 1200x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark professional theme with a cyan accent palette matching the Nebula Audio family. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
 
 ---
 
@@ -77,10 +77,10 @@ Built with egui on macOS and Linux. The window starts at 1200x700 and scales fre
 | Platform | CLAP | VST3 |
 |----------|:----:|:----:|
 | macOS (Universal) | Yes | Yes |
-| Windows (x86_64) | Yes | Yes |
+| Windows (x86_64) | No | Yes |
 | Linux (x86_64) | Yes | Yes |
 
-AUv2 is intentionally not shipped. The project targets CLAP and VST3 to avoid fragile AU compatibility-wrapper GUI behavior in Logic Pro.
+AUv2 is intentionally not shipped. Windows CLAP is intentionally disabled because nih-plug CLAP builds have known Windows compatibility issues. The supported targets are CLAP/VST3 on macOS and Linux, and VST3-only on Windows.
 
 ---
 
@@ -178,7 +178,7 @@ cd nebula-stereo-delay
 # Linux (x86_64, CLAP + VST3)
 ./scripts/build_linux.sh
 
-# Windows (x86_64, CLAP + VST3)
+# Windows (x86_64, VST3 only)
 .\scripts\build_windows.ps1
 ```
 
@@ -232,7 +232,7 @@ GitHub Actions builds on every push and PR:
 
 1. **Lint** — `cargo fmt --check` + `cargo clippy -D warnings` on Ubuntu
 2. **macOS** — Universal binary (arm64 + x86_64), CLAP + VST3
-3. **Windows** — x86_64 CLAP + VST3
+3. **Windows** — x86_64 VST3 only
 4. **Linux** — x86_64 CLAP + VST3
 5. **Release** — Tag a `v*` release and all artifacts publish automatically
 
