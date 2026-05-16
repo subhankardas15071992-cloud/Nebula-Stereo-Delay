@@ -1,7 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
 # Build script for macOS — Universal Binary (arm64 + x86_64)
-# Produces: CLAP, VST3, AUv2
+# Produces: CLAP, VST3
 # Requirements: Xcode Command Line Tools, Rust with arm64 and x86_64 targets
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -63,7 +63,6 @@ check_tool rustup
 check_tool cargo
 check_tool clang
 check_tool lipo
-check_tool nm
 check_tool plutil
 check_tool codesign
 success "All required tools found"
@@ -185,90 +184,20 @@ echo "BNDL????" > "${VST3_BUNDLE}/Contents/PkgInfo"
 
 success "VST3 bundle created: ${VST3_BUNDLE}"
 
-# ── Step 8: Create AUv2 component ─────────────────────────────────────────
-step "Creating AUv2 component..."
-
-AU2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
-rm -rf "${AU2_BUNDLE}"
-mkdir -p "${AU2_BUNDLE}/Contents/MacOS"
-
-cp "${UNIVERSAL_LIB}" "${AU2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
-
-cat > "${AU2_BUNDLE}/Contents/Info.plist" <<AU2EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleDisplayName</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleExecutable</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}.auv2</string>
-    <key>CFBundlePackageType</key>
-    <string>BNDL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>CFBundleSupportedPlatforms</key>
-    <array>
-        <string>MacOSX</string>
-    </array>
-    <key>NSHumanReadableCopyright</key>
-    <string>${VENDOR}</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSPrincipalClass</key>
-    <string/>
-    <key>AudioComponents</key>
-    <array>
-        <dict>
-            <key>name</key>
-            <string>${VENDOR}: ${PLUGIN_NAME}</string>
-            <key>description</key>
-            <string>${PLUGIN_NAME} by ${VENDOR}</string>
-            <key>factoryFunction</key>
-            <string>GetPluginFactoryAUV2_0</string>
-            <key>manufacturer</key>
-            <string>NebA</string>
-            <key>type</key>
-            <string>aufx</string>
-            <key>subtype</key>
-            <string>NSDl</string>
-            <key>version</key>
-            <integer>65536</integer>
-            <key>sandboxSafe</key>
-            <true/>
-        </dict>
-    </array>
-</dict>
-</plist>
-AU2EOF
-echo "BNDL????" > "${AU2_BUNDLE}/Contents/PkgInfo"
-
-success "AUv2 component created: ${AU2_BUNDLE}"
-
-# ── Step 9: Ad-hoc sign bundles ───────────────────────────────────────────
+# ── Step 8: Ad-hoc sign bundles ───────────────────────────────────────────
 step "Ad-hoc signing macOS bundles..."
 
-for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
+for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}"; do
     codesign --force --deep --sign - --timestamp=none "${bundle}" >/dev/null
     success "Signed ${bundle##*/}"
 done
 
-# ── Step 10: Validate bundles ─────────────────────────────────────────────
+# ── Step 9: Validate bundles ──────────────────────────────────────────────
 step "Validating build artifacts..."
 
 VALID=1
 
-for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
+for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}"; do
     bundle_type="${bundle##*.}"
     bundle_label="$(printf '%s' "${bundle_type}" | tr '[:lower:]' '[:upper:]')"
     executable_path="${bundle}/Contents/MacOS/${PLUGIN_NAME}"
@@ -296,22 +225,13 @@ for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
             error "${bundle_label} bundle: Info.plist failed plutil validation"
             VALID=0
         fi
-
-        if [[ "${bundle_type}" == "component" ]]; then
-            if nm -gU "${executable_path}" 2>/dev/null | grep -q "GetPluginFactoryAUV2_0"; then
-                success "AUv2 entrypoint exported: GetPluginFactoryAUV2_0"
-            else
-                error "AUv2 bundle: missing GetPluginFactoryAUV2_0 entrypoint"
-                VALID=0
-            fi
-        fi
     else
         error "${bundle_label} bundle: directory not found"
         VALID=0
     fi
 done
 
-# ── Step 11: Print summary ───────────────────────────────────────────────
+# ── Step 10: Print summary ───────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════════════════${NC}"
 echo -e "${BOLD}  Build Summary — macOS Universal Binary${NC}"
@@ -327,7 +247,6 @@ echo -e "  Output directory: ${BOLD}${BUILD_DIR}${NC}"
 echo -e ""
 echo -e "  ${GREEN}CLAP${NC}  →  ${CLAP_BUNDLE}"
 echo -e "  ${GREEN}VST3${NC}  →  ${VST3_BUNDLE}"
-echo -e "  ${GREEN}AUv2${NC}  →  ${AU2_BUNDLE}"
 echo -e ""
 
 if [[ "${VALID}" -eq 1 ]]; then
@@ -340,7 +259,6 @@ echo -e ""
 echo -e "${BOLD}  Install locations:${NC}"
 echo -e "    CLAP:  ~/Library/Audio/Plug-Ins/CLAP/"
 echo -e "    VST3:  ~/Library/Audio/Plug-Ins/VST3/"
-echo -e "    AUv2:  ~/Library/Audio/Plug-Ins/Components/"
 echo -e ""
 
 # Copy to install locations if --install flag is given
@@ -348,18 +266,11 @@ if [[ "${1:-}" == "--install" ]]; then
     step "Installing plugins to user Library..."
     mkdir -p ~/Library/Audio/Plug-Ins/CLAP
     mkdir -p ~/Library/Audio/Plug-Ins/VST3
-    mkdir -p ~/Library/Audio/Plug-Ins/Components
 
     cp -R "${CLAP_BUNDLE}" ~/Library/Audio/Plug-Ins/CLAP/
     success "CLAP installed"
     cp -R "${VST3_BUNDLE}" ~/Library/Audio/Plug-Ins/VST3/
     success "VST3 installed"
-    cp -R "${AU2_BUNDLE}" ~/Library/Audio/Plug-Ins/Components/
-    success "AUv2 installed"
-
-    # Clear AU cache so macOS picks up the new component
-    auval -cache 2>/dev/null || true
-    info "Run 'auval -a' to verify the AUv2 component is visible to macOS"
 fi
 
 if [[ "${VALID}" -eq 1 ]]; then

@@ -59,7 +59,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   # ──────────────────────────────────────────────────────────────────────────
-  # macOS — Universal Binary (arm64 + x86_64) → CLAP, VST3, AUv2
+  # macOS — Universal Binary (arm64 + x86_64) → CLAP, VST3
   # ──────────────────────────────────────────────────────────────────────────
   build-macos:
     name: Build macOS
@@ -88,15 +88,6 @@ jobs:
       - name: Build plugin
         run: chmod +x scripts/build_macos.sh && ./scripts/build_macos.sh
 
-      - name: Validate AUv2 with auval
-        run: |
-          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
-          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/${{ env.PLUGIN_NAME }}.component"
-          cp -R "build/macos/${{ env.PLUGIN_NAME }}.component" "$HOME/Library/Audio/Plug-Ins/Components/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          auval -a
-          auval -strict -v aufx NSDl NebA
-
       - name: Zip CLAP bundle
         run: |
           cd build/macos
@@ -106,11 +97,6 @@ jobs:
         run: |
           cd build/macos
           zip -r "${{ env.PACKAGE_NAME }}-macos-vst3.zip" "${{ env.PLUGIN_NAME }}.vst3"
-
-      - name: Zip AUv2 bundle
-        run: |
-          cd build/macos
-          zip -r "${{ env.PACKAGE_NAME }}-macos-auv2.zip" "${{ env.PLUGIN_NAME }}.component"
 
       - name: Upload CLAP artifact
         uses: actions/upload-artifact@v4
@@ -126,15 +112,8 @@ jobs:
           path: build/macos/${{ env.PACKAGE_NAME }}-macos-vst3.zip
           if-no-files-found: error
 
-      - name: Upload AUv2 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PACKAGE_NAME }}-macos-auv2
-          path: build/macos/${{ env.PACKAGE_NAME }}-macos-auv2.zip
-          if-no-files-found: error
-
   # ──────────────────────────────────────────────────────────────────────────
-  # Windows — x86_64 → VST3
+  # Windows — x86_64 → CLAP, VST3
   # ──────────────────────────────────────────────────────────────────────────
   build-windows:
     name: Build Windows
@@ -162,12 +141,26 @@ jobs:
         shell: pwsh
         run: scripts/build_windows.ps1
 
+      - name: Zip CLAP bundle
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "build\windows\${{ env.PLUGIN_NAME }}.clap" `
+            -DestinationPath "build\windows\${{ env.PACKAGE_NAME }}-windows-clap.zip"
+
       - name: Zip VST3 bundle
         shell: pwsh
         run: |
           Compress-Archive `
             -Path "build\windows\${{ env.PLUGIN_NAME }}.vst3" `
             -DestinationPath "build\windows\${{ env.PACKAGE_NAME }}-windows-vst3.zip"
+
+      - name: Upload CLAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-windows-clap
+          path: build\windows\${{ env.PACKAGE_NAME }}-windows-clap.zip
+          if-no-files-found: error
 
       - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
@@ -275,7 +268,7 @@ jobs:
           files: |
             release-artifacts/${{ env.PACKAGE_NAME }}-macos-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-macos-vst3/*.zip
-            release-artifacts/${{ env.PACKAGE_NAME }}-macos-auv2/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-windows-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-windows-vst3/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-linux-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-linux-vst3/*.zip

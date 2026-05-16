@@ -98,15 +98,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175571dd1d178ced59193a6fc02dde1b972eb0bc56c892cde9beeceac5bf0f6b"
 
 [[package]]
-name = "assert_no_alloc"
-version = "1.1.2"
-source = "git+https://github.com/robbert-vdh/rust-assert-no-alloc.git?branch=feature/nested-permit-forbid#a6fb4f62b9624715291e320ea5f0f70e73b035cf"
-dependencies = [
- "backtrace",
- "log",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -280,15 +271,6 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 name = "clap-sys"
 version = "0.5.0"
 source = "git+https://github.com/micahrj/clap-sys.git?rev=25d7f53fdb6363ad63fbd80049cb7a42a97ac156#25d7f53fdb6363ad63fbd80049cb7a42a97ac156"
-
-[[package]]
-name = "clap-wrapper"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "449b066f2f7c1a4d9472ad6484c624657ebca8d3084681a0f70fa2b3c2f7a259"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "clipboard-win"
@@ -1025,7 +1007,6 @@ version = "1.0.0"
 dependencies = [
  "approx",
  "atomic_float 1.1.0",
- "clap-wrapper",
  "crossbeam",
  "nih_plug",
  "nih_plug_egui",
@@ -1055,7 +1036,6 @@ source = "git+https://github.com/robbert-vdh/nih-plug.git#f36931f7af4646065488a9
 dependencies = [
  "anyhow",
  "anymap3",
- "assert_no_alloc",
  "atomic_float 0.1.0",
  "atomic_refcell",
  "backtrace",

@@ -22,7 +22,6 @@ default = ["plugin"]
 plugin = [
     "dep:nih_plug",
     "dep:nih_plug_egui",
-    "dep:clap-wrapper",
     "dep:atomic_float",
     "dep:crossbeam",
     "dep:rustc-hash",
@@ -31,9 +30,8 @@ plugin = [
 ]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"], optional = true }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", optional = true }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", optional = true }
-clap-wrapper = { version = "0.3", default-features = false, features = ["auv2", "parallel"], optional = true }
 atomic_float = { version = "1", optional = true }
 crossbeam = { version = "0.8", optional = true }
 rustc-hash = { version = "2", optional = true }

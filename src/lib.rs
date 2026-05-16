@@ -1,9 +1,8 @@
 //! Main plugin entry point for **Nebula Stereo Delay** by Nebula Audio.
 //!
 //! This crate implements a professional stereo delay audio plugin built on
-//! [nih-plug](https://github.com/robbert-vdh/nih-plug). It exports both
-//! CLAP and VST3 plugin formats, plus an AUv2 wrapper on macOS through
-//! `clap-wrapper`.
+//! [nih-plug](https://github.com/robbert-vdh/nih-plug). It exports CLAP and
+//! VST3 plugin formats.
 //!
 //! # Architecture
 //!
@@ -38,7 +37,6 @@
 //! |----------|----------------------------------|----------------------|
 //! | CLAP     | `nih_export_clap!`               | Linux, macOS, Windows|
 //! | VST3     | `nih_export_vst3!`               | Linux, macOS, Windows|
-//! | AUv2     | `clap_wrapper::export_auv2!`      | macOS only           |
 
 /// DSP engine — always available (no plugin dependency).
 pub mod dsp;
@@ -155,6 +153,12 @@ impl Plugin for NebulaStereoDelay {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        #[cfg(target_os = "windows")]
+        {
+            None
+        }
+
+        #[cfg(not(target_os = "windows"))]
         gui::create_egui_editor(self.params.clone())
     }
 
@@ -299,7 +303,3 @@ nih_plug::nih_export_clap!(NebulaStereoDelay);
 
 #[cfg(feature = "plugin")]
 nih_plug::nih_export_vst3!(NebulaStereoDelay);
-
-// Export AUv2 entrypoints on macOS so the .component bundle is a real Audio Unit.
-#[cfg(all(feature = "plugin", target_os = "macos"))]
-clap_wrapper::export_auv2!();

@@ -12,7 +12,6 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-orange.svg)](#build)
 [![Format: CLAP](https://img.shields.io/badge/format-CLAP-purple.svg)](#plugin-formats)
 [![Format: VST3](https://img.shields.io/badge/format-VST3-green.svg)](#plugin-formats)
-[![Format: AUv2](https://img.shields.io/badge/format-AUv2-cyan.svg)](#plugin-formats)
 
 </div>
 
@@ -69,19 +68,19 @@ Right-click any control to assign a MIDI CC. Learn mode listens for the next CC 
 The FX bypass crossfades over 512 samples. No clicks. No pops. No hard cuts.
 
 ### Freely Scalable GUI
-Built with egui on macOS and Linux. The window starts at 1200x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark professional theme with a cyan accent palette matching the Nebula Audio family.
+Built with egui on macOS and Linux. The window starts at 1200x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark professional theme with a cyan accent palette matching the Nebula Audio family. Windows builds currently use the host's generic parameter editor for DAW stability.
 
 ---
 
 ## Plugin Formats
 
-| Platform | CLAP | VST3 | AUv2 |
-|----------|:----:|:----:|:----:|
-| macOS (Universal) | Yes | Yes | Yes |
-| Windows (x86_64) | — | Yes | — |
-| Linux (x86_64) | Yes | Yes | — |
+| Platform | CLAP | VST3 |
+|----------|:----:|:----:|
+| macOS (Universal) | Yes | Yes |
+| Windows (x86_64) | Yes | Yes |
+| Linux (x86_64) | Yes | Yes |
 
-AUv2 on macOS is exported from the plugin binary through the Rust `clap-wrapper` crate and validated with `auval` in CI.
+AUv2 is intentionally not shipped. The project targets CLAP and VST3 to avoid fragile AU compatibility-wrapper GUI behavior in Logic Pro.
 
 ---
 
@@ -173,13 +172,13 @@ Input ──► Input Mode Selection ──► ───────────
 git clone https://github.com/<you>/nebula-stereo-delay.git
 cd nebula-stereo-delay
 
-# macOS (Universal: arm64 + x86_64, CLAP + VST3 + AUv2)
+# macOS (Universal: arm64 + x86_64, CLAP + VST3)
 ./scripts/build_macos.sh
 
 # Linux (x86_64, CLAP + VST3)
 ./scripts/build_linux.sh
 
-# Windows (x86_64, VST3 only)
+# Windows (x86_64, CLAP + VST3)
 .\scripts\build_windows.ps1
 ```
 
@@ -232,8 +231,8 @@ src/
 GitHub Actions builds on every push and PR:
 
 1. **Lint** — `cargo fmt --check` + `cargo clippy -D warnings` on Ubuntu
-2. **macOS** — Universal binary (arm64 + x86_64), CLAP + VST3 + AUv2
-3. **Windows** — x86_64 VST3
+2. **macOS** — Universal binary (arm64 + x86_64), CLAP + VST3
+3. **Windows** — x86_64 CLAP + VST3
 4. **Linux** — x86_64 CLAP + VST3
 5. **Release** — Tag a `v*` release and all artifacts publish automatically
 

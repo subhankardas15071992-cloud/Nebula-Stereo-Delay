@@ -56,19 +56,9 @@ if [[ -d "${PROJECT_ROOT}/build" ]]; then
         success "Removed empty build/ directory" || true
 fi
 
-# ── Remove clap-wrapper clone ──────────────────────────────────────────────
-step "Removing clap-wrapper clone..."
-CLAP_WRAPPER_DIR="${PROJECT_ROOT}/.clap-wrapper"
-if [[ -d "${CLAP_WRAPPER_DIR}" ]]; then
-    rm -rf "${CLAP_WRAPPER_DIR}"
-    success "Removed .clap-wrapper/"
-else
-    info "No .clap-wrapper directory found — skipping"
-fi
-
 # ── Remove any leftover artifacts in project root ─────────────────────────
 step "Cleaning miscellaneous artifacts..."
-for pattern in "libnebula_stereo_delay_universal.dylib" "*.clap" "*.vst3" "*.component"; do
+for pattern in "libnebula_stereo_delay_universal.dylib" "*.clap" "*.vst3"; do
     for file in "${PROJECT_ROOT}"/${pattern}; do
         if [[ -e "${file}" ]]; then
             rm -rf "${file}"
