@@ -1,0 +1,1492 @@
+//! DSP Engine for **Nebula Stereo Delay** by Nebula Audio
+//!
+//! A professional stereo delay engine with double-precision (`f64`) processing
+//! throughout the entire signal chain. Only the final output stage should
+//! convert to `f32` when interfacing with the audio host.
+//!
+//! # Signal Flow
+//!
+//! ```text
+//! Input ──► Input Mode Selection ──► ──────────────────────────────────► Dry/Wet Mix ──► Soft Bypass ──► Output
+//!                                      │                                  ▲
+//!                                      ▼                                  │
+//!                                 Delay Line (cubic interp) ──► Filtered Signal (wet)
+//!                                      ▲                          │
+//!                                      │                          ▼
+//!                                      └──────── Feedback ◄─── Biquad Filters
+//!                                                ▲
+//!                                                │
+//!                                           Routing Matrix
+//!                                           (crossfeed + phase)
+//! ```
+//!
+//! # Design Principles
+//!
+//! - **All internal math in `f64`**: No precision loss until the final output.
+//! - **Safe math**: All divisions guarded, feedback clamped, cutoffs bounded.
+//! - **No panics in DSP paths**: All edge cases handled gracefully.
+//! - **Anti-zipper noise**: Every continuous parameter smoothed via 64-sample linear ramps.
+//! - **Soft bypass**: Crossfade over 512 samples, never a hard cut.
+
+use std::f64::consts::TAU;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Constants
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Maximum delay time in seconds (supports up to 10 s at any sample rate).
+const MAX_DELAY_SECS: f64 = 10.0;
+
+/// Number of samples for parameter-smoothing ramps (anti-zipper noise).
+const SMOOTH_SAMPLES: u64 = 64;
+
+/// Number of samples for the soft-bypass crossfade.
+const BYPASS_FADE_SAMPLES: u64 = 512;
+
+/// Minimum delay in samples — prevents the read head from colliding with
+/// the write head and avoids division-by-zero in interpolation.
+const MIN_DELAY_SAMPLES: f64 = 1.0;
+
+/// Extra buffer slots beyond the maximum delay, giving cubic interpolation
+/// safe room to read past the nominal read position.
+const BUFFER_MARGIN: usize = 8;
+
+/// Default LFO frequency (Hz) used by the **Rotate** routing mode to
+/// modulate the stereo-panning angle.
+const ROTATE_LFO_HZ: f64 = 0.5;
+
+/// Butterworth Q for 12 dB/oct biquad filters (= 1/√2).
+const BUTTERWORTH_Q: f64 = 0.707_106_781_186_547_6;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public Enums
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Routing modes that determine how the L and R delay channels interact
+/// in the feedback network and (for some modes) at the output stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingMode {
+    /// Independent L/R channels with full crossfeed control via the
+    /// `crossfeed_lr` / `crossfeed_rl` parameters.
+    Customized,
+    /// Straight: L→L, R→R with no crossfeed whatsoever.
+    Straight,
+    /// Full symmetric crossfeed: each channel's feedback crosses fully
+    /// to the opposite channel (no self-feedback).
+    Crossfeed,
+    /// 90 % same-channel feedback, 10 % crossfeed.
+    NinetyTen,
+    /// 10 % same-channel feedback, 90 % crossfeed.
+    TenNinety,
+    /// Ping-pong: signal bounces L↔R on successive repeats (cross-only
+    /// feedback, no self-feedback).
+    PingPong,
+    /// Panning delay: normal self-feedback, but the wet outputs are
+    /// swapped (L delay → R out, R delay → L out) for a wide stereo image.
+    Pan,
+    /// Rotary speaker simulation: an LFO continuously modulates the
+    /// blend of self- vs. cross-feedback and applies equal-power panning
+    /// to the wet outputs.
+    Rotate,
+}
+
+impl Default for RoutingMode {
+    fn default() -> Self {
+        Self::Customized
+    }
+}
+
+/// Per-channel input source selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputMode {
+    /// No input (muted).
+    Off,
+    /// Use the left input channel only.
+    #[default]
+    Left,
+    /// Use the right input channel only.
+    Right,
+    /// Sum of left and right inputs (mono sum), scaled by 0.5.
+    LeftPlusRight,
+    /// Difference of left and right inputs (side signal), scaled by 0.5.
+    LeftMinusRight,
+}
+
+/// Musical note values for tempo-sync quantization.
+///
+/// `T` variants are *triplet* divisions (2/3 of the straight value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NoteValue {
+    /// Whole note (1/1) — 4 beats.
+    Whole,
+    /// Half note (1/2) — 2 beats.
+    Half,
+    /// Half-note triplet (1/2T) — 4/3 beats.
+    HalfTriplet,
+    /// Quarter note (1/4) — 1 beat.
+    #[default]
+    Quarter,
+    /// Quarter-note triplet (1/4T) — 2/3 beats.
+    QuarterTriplet,
+    /// Eighth note (1/8) — 0.5 beats.
+    Eighth,
+    /// Eighth-note triplet (1/8T) — 1/3 beats.
+    EighthTriplet,
+    /// Sixteenth note (1/16) — 0.25 beats.
+    Sixteenth,
+    /// Sixteenth-note triplet (1/16T) — 1/6 beats.
+    SixteenthTriplet,
+    /// Thirty-second note (1/32) — 0.125 beats.
+    ThirtySecond,
+    /// Thirty-second-note triplet (1/32T) — 1/12 beats.
+    ThirtySecondTriplet,
+    /// Sixty-fourth note (1/64) — 0.0625 beats.
+    SixtyFourth,
+}
+
+impl NoteValue {
+    /// Returns the delay duration in seconds for this note value at the
+    /// given tempo in BPM.
+    ///
+    /// The formula is: `duration = (beats_per_note / bpm) * 60`.
+    /// BPM is clamped to a minimum of 1.0 to prevent division by zero.
+    #[inline]
+    pub fn duration_seconds(&self, bpm: f64) -> f64 {
+        let beats = match self {
+            NoteValue::Whole => 4.0,
+            NoteValue::Half => 2.0,
+            NoteValue::HalfTriplet => 4.0 / 3.0,
+            NoteValue::Quarter => 1.0,
+            NoteValue::QuarterTriplet => 2.0 / 3.0,
+            NoteValue::Eighth => 0.5,
+            NoteValue::EighthTriplet => 1.0 / 3.0,
+            NoteValue::Sixteenth => 0.25,
+            NoteValue::SixteenthTriplet => 1.0 / 6.0,
+            NoteValue::ThirtySecond => 0.125,
+            NoteValue::ThirtySecondTriplet => 1.0 / 12.0,
+            NoteValue::SixtyFourth => 0.0625,
+        };
+        let safe_bpm = bpm.max(1.0);
+        (beats / safe_bpm) * 60.0
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public Parameter & Config Structs
+// ────────────────────────────────────────────────────────────────────────────
+
+/// All parameters required for a single `process()` call.
+///
+/// The host or UI layer fills this struct per-sample (or per-block) and
+/// passes it by reference.  Every continuous parameter is smoothed
+/// internally, so it is safe to update them abruptly.
+#[derive(Debug, Clone)]
+pub struct DelayParams {
+    // ── Input selection ───────────────────────────────────────────────
+    /// Input source for the left delay channel.
+    pub input_mode_l: InputMode,
+    /// Input source for the right delay channel.
+    pub input_mode_r: InputMode,
+
+    // ── Delay time (seconds) — used when `tempo_sync` is off ──────────
+    /// Base delay time for the left channel in seconds.
+    pub delay_time_l: f64,
+    /// Base delay time for the right channel in seconds.
+    pub delay_time_r: f64,
+
+    // ── Filter cutoffs (Hz) ───────────────────────────────────────────
+    /// Low-cut (high-pass) frequency for the left channel. Range: 20–20 000 Hz.
+    pub low_cut_l: f64,
+    /// Low-cut (high-pass) frequency for the right channel.
+    pub low_cut_r: f64,
+    /// High-cut (low-pass) frequency for the left channel. Range: 20–20 000 Hz.
+    pub high_cut_l: f64,
+    /// High-cut (low-pass) frequency for the right channel.
+    pub high_cut_r: f64,
+
+    // ── Feedback ──────────────────────────────────────────────────────
+    /// Feedback amount for the left channel (0.0 – 1.0).
+    pub feedback_l: f64,
+    /// Feedback amount for the right channel (0.0 – 1.0).
+    pub feedback_r: f64,
+    /// Invert left-channel feedback phase (180° flip).
+    pub feedback_phase_l: bool,
+    /// Invert right-channel feedback phase (180° flip).
+    pub feedback_phase_r: bool,
+
+    // ── Crossfeed ─────────────────────────────────────────────────────
+    /// L→R crossfeed amount (0.0 – 1.0).
+    pub crossfeed_lr: f64,
+    /// R→L crossfeed amount (0.0 – 1.0).
+    pub crossfeed_rl: f64,
+    /// Invert crossfeed phase (applies to both L→R and R→L paths).
+    pub crossfeed_phase: bool,
+
+    // ── Routing ───────────────────────────────────────────────────────
+    /// Active routing mode.
+    pub routing: RoutingMode,
+
+    // ── Tempo sync ────────────────────────────────────────────────────
+    /// When `true`, delay time is derived from `tempo_bpm` and `note_l`/`note_r`.
+    pub tempo_sync: bool,
+    /// Host tempo in BPM.
+    pub tempo_bpm: f64,
+    /// Note value for the left channel (used when `tempo_sync` is on).
+    pub note_l: NoteValue,
+    /// Note value for the right channel (used when `tempo_sync` is on).
+    pub note_r: NoteValue,
+    /// Deviation from the quantized delay time for the left channel in
+    /// cents (±100). Applied as `2^(deviation/1200)`.
+    pub deviation_l: f64,
+    /// Deviation from the quantized delay time for the right channel in cents.
+    pub deviation_r: f64,
+
+    // ── /:2 and ×2 ───────────────────────────────────────────────────
+    /// Halve the left-channel delay time.
+    pub halve_l: bool,
+    /// Halve the right-channel delay time.
+    pub halve_r: bool,
+    /// Double the left-channel delay time.
+    pub double_l: bool,
+    /// Double the right-channel delay time.
+    pub double_r: bool,
+
+    // ── Output ────────────────────────────────────────────────────────
+    /// Dry/wet mix for the left channel (0.0 = fully dry, 1.0 = fully wet).
+    pub output_mix_l: f64,
+    /// Dry/wet mix for the right channel (0.0 = fully dry, 1.0 = fully wet).
+    pub output_mix_r: f64,
+
+    // ── Bypass ────────────────────────────────────────────────────────
+    /// Soft-bypass flag (crossfades over 512 samples).
+    pub bypass: bool,
+
+    // ── Stereo link ───────────────────────────────────────────────────
+    /// When `true`, the left-channel parameters are mirrored to the right
+    /// channel so both sides process identically.
+    pub stereo_link: bool,
+}
+
+impl Default for DelayParams {
+    fn default() -> Self {
+        Self {
+            input_mode_l: InputMode::Left,
+            input_mode_r: InputMode::Right,
+            delay_time_l: 0.5,
+            delay_time_r: 0.5,
+            low_cut_l: 20.0,
+            low_cut_r: 20.0,
+            high_cut_l: 20000.0,
+            high_cut_r: 20000.0,
+            feedback_l: 0.4,
+            feedback_r: 0.4,
+            feedback_phase_l: false,
+            feedback_phase_r: false,
+            crossfeed_lr: 0.0,
+            crossfeed_rl: 0.0,
+            crossfeed_phase: false,
+            routing: RoutingMode::default(),
+            tempo_sync: false,
+            tempo_bpm: 120.0,
+            note_l: NoteValue::default(),
+            note_r: NoteValue::default(),
+            deviation_l: 0.0,
+            deviation_r: 0.0,
+            halve_l: false,
+            halve_r: false,
+            double_l: false,
+            double_r: false,
+            output_mix_l: 0.5,
+            output_mix_r: 0.5,
+            bypass: false,
+            stereo_link: false,
+        }
+    }
+}
+
+/// Creation-time configuration for the delay engine.
+///
+/// These values are set once when the engine is instantiated and typically
+/// do not change during the lifetime of the plugin.
+#[derive(Debug, Clone)]
+pub struct DelayEngineConfig {
+    /// Maximum sample rate the engine should allocate buffers for.
+    /// Defaults to 192 000 Hz.  If `set_sample_rate` is later called with
+    /// a higher rate, the buffers will be reallocated automatically.
+    pub max_sample_rate: f64,
+}
+
+impl Default for DelayEngineConfig {
+    fn default() -> Self {
+        Self {
+            max_sample_rate: 192_000.0,
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Internal: Smoothed Parameter
+// ────────────────────────────────────────────────────────────────────────────
+
+/// A linear-ramp smoother that eliminates zipper noise on parameter changes.
+///
+/// When `set_target` is called with a new value, the smoother computes a
+/// per-sample increment that will glide from the current value to the
+/// target over `smooth_samples` samples.  Once the ramp completes the
+/// value snaps exactly to the target.
+#[derive(Debug, Clone)]
+struct SmoothedValue {
+    /// Current output value (advanced every sample).
+    current: f64,
+    /// Value we are ramping towards.
+    target: f64,
+    /// Per-sample increment = `(target - start) / smooth_samples`.
+    increment: f64,
+    /// How many samples remain in the current ramp.
+    samples_remaining: u64,
+    /// Ramp length in samples.
+    smooth_samples: u64,
+}
+
+impl SmoothedValue {
+    /// Create a new smoother initialised to `initial` with the given ramp
+    /// length in samples.
+    fn new(initial: f64, smooth_samples: u64) -> Self {
+        Self {
+            current: initial,
+            target: initial,
+            increment: 0.0,
+            samples_remaining: 0,
+            smooth_samples: smooth_samples.max(1), // at least 1 sample
+        }
+    }
+
+    /// Set a new target value.  If the target equals the current target
+    /// (within `f64::EPSILON`), nothing happens — this avoids
+    /// re-triggering a ramp for identical values.
+    fn set_target(&mut self, target: f64) {
+        // Avoid floating-point noise triggering constant re-ramps.
+        if (target - self.target).abs() < f64::EPSILON {
+            return;
+        }
+        self.target = target;
+        let diff = target - self.current;
+        self.increment = diff / self.smooth_samples as f64;
+        self.samples_remaining = self.smooth_samples;
+    }
+
+    /// Advance the smoother by one sample and return the current value.
+    #[inline]
+    fn next(&mut self) -> f64 {
+        if self.samples_remaining > 0 {
+            self.current += self.increment;
+            self.samples_remaining -= 1;
+            if self.samples_remaining == 0 {
+                // Snap exactly to avoid accumulated floating-point drift.
+                self.current = self.target;
+            }
+        }
+        self.current
+    }
+
+    /// Immediately jump to a value (no ramp).  Useful during `reset()`.
+    fn reset(&mut self, value: f64) {
+        self.current = value;
+        self.target = value;
+        self.increment = 0.0;
+        self.samples_remaining = 0;
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Internal: Delay Line (circular buffer, cubic Hermite interpolation)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// A circular-buffer delay line with **cubic Hermite interpolation** and
+/// full `f64` precision.
+///
+/// The buffer length is always a power of two so that modular arithmetic
+/// can be performed with a bitmask instead of the `%` operator.
+#[derive(Debug, Clone)]
+struct DelayLine {
+    /// Sample storage.
+    buffer: Vec<f64>,
+    /// Index of the next slot to write.
+    write_pos: usize,
+    /// `buffer.len() - 1` — used for fast index wrapping via `& mask`.
+    mask: usize,
+    /// Current sample rate (used to convert seconds → samples).
+    sample_rate: f64,
+}
+
+impl DelayLine {
+    /// Create a delay line sized for `MAX_DELAY_SECS` at `alloc_rate` Hz,
+    /// but operating at `working_rate` Hz for delay-time calculations.
+    ///
+    /// This allows pre-allocating a buffer large enough for a high sample
+    /// rate while correctly computing delay positions at a lower rate.
+    fn new(alloc_rate: f64, working_rate: f64) -> Self {
+        let ar = alloc_rate.max(1.0);
+        let wr = working_rate.max(1.0);
+        let min_slots = (MAX_DELAY_SECS * ar).ceil() as usize + BUFFER_MARGIN;
+        let buf_size = min_slots.next_power_of_two();
+        Self {
+            buffer: vec![0.0; buf_size],
+            write_pos: 0,
+            mask: buf_size - 1,
+            sample_rate: wr,
+        }
+    }
+
+    /// Reinitialise the delay line for a new sample rate.
+    ///
+    /// The buffer is only reallocated when it would be too small for the
+    /// new rate; otherwise only the working sample-rate field is updated
+    /// (zero-cost).
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        let sr = sample_rate.max(1.0);
+        if (sr - self.sample_rate).abs() < f64::EPSILON {
+            return;
+        }
+        self.sample_rate = sr;
+        // Reallocate only if the existing buffer is too small.
+        let min_slots = (MAX_DELAY_SECS * sr).ceil() as usize + BUFFER_MARGIN;
+        let needed = min_slots.next_power_of_two();
+        if needed > self.buffer.len() {
+            self.buffer = vec![0.0; needed];
+            self.write_pos = 0;
+            self.mask = needed - 1;
+        }
+    }
+
+    /// Read a sample from the delay line at the given delay time in
+    /// seconds, using **4-point cubic Hermite interpolation**.
+    ///
+    /// The Hermite interpolant preserves continuity of the first
+    /// derivative, yielding smooth pitch transitions when the delay time
+    /// is modulated and minimising aliasing artifacts.
+    ///
+    /// # Safety
+    ///
+    /// The delay time is clamped to `[MIN_DELAY_SAMPLES / sr,
+    /// buffer_len - margin]` so the read head can never collide with the
+    /// write head and the four interpolation taps are always valid.
+    #[inline]
+    fn read(&self, delay_time_secs: f64) -> f64 {
+        let delay_samples = delay_time_secs * self.sample_rate;
+        // Clamp to safe range.
+        let delay_samples = delay_samples.max(MIN_DELAY_SAMPLES);
+        let max_delay = (self.buffer.len() - BUFFER_MARGIN) as f64;
+        let delay_samples = delay_samples.min(max_delay);
+
+        // Fractional read position = write_pos - delay_samples.
+        let read_pos = self.write_pos as f64 - delay_samples;
+        let int_pos = read_pos.floor() as isize;
+        let frac = read_pos - int_pos as f64;
+
+        // Fetch the four neighbouring samples needed for cubic
+        // interpolation.  `sample_at` handles circular wrapping.
+        let y0 = self.sample_at(int_pos - 1);
+        let y1 = self.sample_at(int_pos);
+        let y2 = self.sample_at(int_pos + 1);
+        let y3 = self.sample_at(int_pos + 2);
+
+        // Cubic Hermite interpolation (4-point, 3rd-order).
+        //
+        // Coefficients chosen so that:
+        //   - At frac = 0 the output equals y1 (exact sample).
+        //   - The first derivative matches the central difference at
+        //     y1, giving smooth modulation.
+        let c0 = y1;
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+
+        ((c3 * frac + c2) * frac + c1) * frac + c0
+    }
+
+    /// Write a sample at the current write position and advance the
+    /// write pointer by one slot.
+    #[inline]
+    fn write_and_advance(&mut self, sample: f64) {
+        self.buffer[self.write_pos] = sample;
+        self.write_pos = (self.write_pos + 1) & self.mask;
+    }
+
+    /// Retrieve a sample at an arbitrary (possibly negative) index,
+    /// wrapping around the circular buffer.
+    ///
+    /// Because `buffer.len()` is always a power of two, casting a
+    /// negative `isize` to `usize` and masking produces the correct
+    /// wrapped index in two's-complement arithmetic.
+    #[inline]
+    fn sample_at(&self, index: isize) -> f64 {
+        self.buffer[(index as usize) & self.mask]
+    }
+
+    /// Clear the buffer and reset the write pointer.
+    fn reset(&mut self) {
+        for s in self.buffer.iter_mut() {
+            *s = 0.0;
+        }
+        self.write_pos = 0;
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Internal: Biquad Filter
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Filter type discriminator for coefficient calculation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BiquadKind {
+    /// 12 dB/octave low-pass.
+    LowPass,
+    /// 12 dB/octave high-pass.
+    HighPass,
+}
+
+/// Second-order biquad filter operating entirely in `f64`.
+///
+/// Uses **Direct Form I** which is preferred for audio because it is
+/// numerically stable even at low frequencies and high sample rates
+/// (unlike Direct Form II which can suffer from coefficient
+/// quantisation).
+///
+/// Coefficients are derived from the *Audio EQ Cookbook* (R. Bristow-
+/// Johnson) for a Butterworth (maximally-flat) magnitude response.
+#[derive(Debug, Clone)]
+struct BiquadFilter {
+    // Normalised feed-forward coefficients (a0 = 1.0).
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    // Normalised feed-back coefficients (a0 = 1.0, sign-flipped).
+    a1: f64,
+    a2: f64,
+    // Direct-Form I state: previous inputs.
+    x1: f64,
+    x2: f64,
+    // Direct-Form I state: previous outputs.
+    y1: f64,
+    y2: f64,
+}
+
+impl BiquadFilter {
+    /// Create a unity-gain pass-through filter.
+    fn new() -> Self {
+        Self {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    /// Recompute coefficients for the given filter kind and cutoff
+    /// frequency at the given sample rate.
+    ///
+    /// The cutoff is clamped to `(1 Hz, 0.499 × sample_rate)` so that
+    /// the bilinear transform remains stable.
+    fn update_coefficients(&mut self, kind: BiquadKind, cutoff_hz: f64, sample_rate: f64) {
+        let safe_sr = sample_rate.max(1.0);
+        let nyquist = safe_sr * 0.499;
+        let fc = cutoff_hz.max(1.0).min(nyquist);
+
+        let omega = TAU * fc / safe_sr;
+        let sin_w = omega.sin();
+        let cos_w = omega.cos();
+        let alpha = sin_w / (2.0 * BUTTERWORTH_Q);
+
+        match kind {
+            BiquadKind::HighPass => {
+                let b0 = (1.0 + cos_w) * 0.5;
+                let b1 = -(1.0 + cos_w);
+                let b2 = (1.0 + cos_w) * 0.5;
+                let a0 = 1.0 + alpha;
+                let a1 = -2.0 * cos_w;
+                let a2 = 1.0 - alpha;
+                self.b0 = b0 / a0;
+                self.b1 = b1 / a0;
+                self.b2 = b2 / a0;
+                self.a1 = a1 / a0;
+                self.a2 = a2 / a0;
+            }
+            BiquadKind::LowPass => {
+                let b0 = (1.0 - cos_w) * 0.5;
+                let b1 = 1.0 - cos_w;
+                let b2 = (1.0 - cos_w) * 0.5;
+                let a0 = 1.0 + alpha;
+                let a1 = -2.0 * cos_w;
+                let a2 = 1.0 - alpha;
+                self.b0 = b0 / a0;
+                self.b1 = b1 / a0;
+                self.b2 = b2 / a0;
+                self.a1 = a1 / a0;
+                self.a2 = a2 / a0;
+            }
+        }
+    }
+
+    /// Process a single `f64` sample through the filter.
+    ///
+    /// Difference equation (Direct Form I, a0 normalised to 1):
+    ///
+    /// ```text
+    /// y[n] = b0·x[n] + b1·x[n-1] + b2·x[n-2]
+    ///       - a1·y[n-1] - a2·y[n-2]
+    /// ```
+    #[inline]
+    fn process(&mut self, input: f64) -> f64 {
+        let output = self.b0 * input
+            + self.b1 * self.x1
+            + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
+        self.x2 = self.x1;
+        self.x1 = input;
+        self.y2 = self.y1;
+        self.y1 = output;
+        output
+    }
+
+    /// Clear all internal state (coefficients are left untouched).
+    fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.x2 = 0.0;
+        self.y1 = 0.0;
+        self.y2 = 0.0;
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Main Engine
+// ────────────────────────────────────────────────────────────────────────────
+
+/// The main DSP engine for the **Nebula Stereo Delay** plugin.
+///
+/// # Precision
+///
+/// Every calculation is performed in `f64`.  The only place `f32`
+/// should appear is when the caller converts the `(f64, f64)` output of
+/// [`process`](Self::process) to `f32` for the audio host.
+///
+/// # Thread Safety
+///
+/// `DelayEngine` is **not** `Sync` — it is designed to be used from a
+/// single real-time audio thread.  Parameter updates from the UI should
+/// be communicated via atomics or a lock-free queue to the audio thread,
+/// which then writes them into a `DelayParams` before each `process`
+/// call.
+///
+/// # Example (simplified)
+///
+/// ```ignore
+/// let mut engine = DelayEngine::new(44_100.0);
+/// let params = DelayParams::default();
+///
+/// for frame in audio_buffer {
+///     let (out_l, out_r) = engine.process(frame.l as f64, frame.r as f64, &params);
+///     frame.l = out_l as f32;
+///     frame.r = out_r as f32;
+/// }
+/// ```
+pub struct DelayEngine {
+    // ── Sample rate ───────────────────────────────────────────────────
+    sample_rate: f64,
+
+    // ── Delay lines ───────────────────────────────────────────────────
+    delay_l: DelayLine,
+    delay_r: DelayLine,
+
+    // ── Biquad filters: low-cut (HP) and high-cut (LP) per channel ───
+    low_cut_l: BiquadFilter,
+    low_cut_r: BiquadFilter,
+    high_cut_l: BiquadFilter,
+    high_cut_r: BiquadFilter,
+
+    // ── Smoothed parameters (anti-zipper noise) ───────────────────────
+    smooth_delay_l: SmoothedValue,
+    smooth_delay_r: SmoothedValue,
+    smooth_low_cut_l: SmoothedValue,
+    smooth_low_cut_r: SmoothedValue,
+    smooth_high_cut_l: SmoothedValue,
+    smooth_high_cut_r: SmoothedValue,
+    smooth_feedback_l: SmoothedValue,
+    smooth_feedback_r: SmoothedValue,
+    smooth_crossfeed_lr: SmoothedValue,
+    smooth_crossfeed_rl: SmoothedValue,
+    smooth_mix_l: SmoothedValue,
+    smooth_mix_r: SmoothedValue,
+
+    // ── Soft bypass ───────────────────────────────────────────────────
+    /// Crossfade gain: 1.0 = fully active, 0.0 = fully bypassed.
+    bypass_gain: SmoothedValue,
+    /// Internal bypass latch set by `set_bypass()`.
+    bypass_latch: bool,
+
+    // ── LFO for Rotate mode ───────────────────────────────────────────
+    /// Current phase of the rotation LFO in radians `[0, TAU)`.
+    lfo_phase: f64,
+
+    // ── Config ────────────────────────────────────────────────────────
+    config: DelayEngineConfig,
+}
+
+impl DelayEngine {
+    // ──────────────────────────────────────────────────────────────────
+    // Public API
+    // ──────────────────────────────────────────────────────────────────
+
+    /// Return a reference to the engine's configuration.
+    #[allow(dead_code)]
+    pub fn config(&self) -> &DelayEngineConfig {
+        &self.config
+    }
+
+    /// Create a new delay engine initialised for the given sample rate.
+    ///
+    /// The delay-line buffers are allocated to hold `MAX_DELAY_SECS`
+    /// seconds at the provided rate (or the configured
+    /// `max_sample_rate`, whichever is larger) so that no reallocation
+    /// is needed for sample-rate changes within that range.
+    pub fn new(sample_rate: f64) -> Self {
+        let config = DelayEngineConfig::default();
+        let sr = sample_rate.max(1.0);
+        // Allocate delay-line buffers for the larger of the requested rate
+        // and the configured max_sample_rate so that a subsequent call to
+        // set_sample_rate() within that range never requires reallocation.
+        let alloc_sr = sr.max(config.max_sample_rate);
+
+        Self {
+            sample_rate: sr,
+            delay_l: DelayLine::new(alloc_sr, sr),
+            delay_r: DelayLine::new(alloc_sr, sr),
+            low_cut_l: BiquadFilter::new(),
+            low_cut_r: BiquadFilter::new(),
+            high_cut_l: BiquadFilter::new(),
+            high_cut_r: BiquadFilter::new(),
+            smooth_delay_l: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
+            smooth_delay_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
+            smooth_low_cut_l: SmoothedValue::new(20.0, SMOOTH_SAMPLES),
+            smooth_low_cut_r: SmoothedValue::new(20.0, SMOOTH_SAMPLES),
+            smooth_high_cut_l: SmoothedValue::new(20000.0, SMOOTH_SAMPLES),
+            smooth_high_cut_r: SmoothedValue::new(20000.0, SMOOTH_SAMPLES),
+            smooth_feedback_l: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_feedback_r: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_crossfeed_lr: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_crossfeed_rl: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_mix_l: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
+            smooth_mix_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
+            bypass_gain: SmoothedValue::new(1.0, BYPASS_FADE_SAMPLES),
+            bypass_latch: false,
+            lfo_phase: 0.0,
+            config,
+        }
+    }
+
+    /// Change the operating sample rate.
+    ///
+    /// If the new rate exceeds the buffer capacity the delay lines are
+    /// reallocated (which causes a brief audio glitch, so only call this
+    /// when the host genuinely changes the project sample rate).
+    pub fn set_sample_rate(&mut self, sample_rate: f64) {
+        let sr = sample_rate.max(1.0);
+        self.sample_rate = sr;
+        self.delay_l.set_sample_rate(sr);
+        self.delay_r.set_sample_rate(sr);
+    }
+
+    /// Reset all internal state to silence.
+    ///
+    /// Clears the delay buffers, filter states, and snaps all smoothed
+    /// parameters to their current targets.
+    pub fn reset(&mut self) {
+        self.delay_l.reset();
+        self.delay_r.reset();
+        self.low_cut_l.reset();
+        self.low_cut_r.reset();
+        self.high_cut_l.reset();
+        self.high_cut_r.reset();
+        // Snap smoothers to their current targets (no ramp).
+        self.smooth_delay_l.reset(self.smooth_delay_l.target);
+        self.smooth_delay_r.reset(self.smooth_delay_r.target);
+        self.smooth_low_cut_l.reset(self.smooth_low_cut_l.target);
+        self.smooth_low_cut_r.reset(self.smooth_low_cut_r.target);
+        self.smooth_high_cut_l.reset(self.smooth_high_cut_l.target);
+        self.smooth_high_cut_r.reset(self.smooth_high_cut_r.target);
+        self.smooth_feedback_l.reset(self.smooth_feedback_l.target);
+        self.smooth_feedback_r.reset(self.smooth_feedback_r.target);
+        self.smooth_crossfeed_lr.reset(self.smooth_crossfeed_lr.target);
+        self.smooth_crossfeed_rl.reset(self.smooth_crossfeed_rl.target);
+        self.smooth_mix_l.reset(self.smooth_mix_l.target);
+        self.smooth_mix_r.reset(self.smooth_mix_r.target);
+        self.bypass_gain.reset(self.bypass_gain.target);
+        self.lfo_phase = 0.0;
+    }
+
+    /// Engage or release the soft bypass.
+    ///
+    /// The engine crossfades over `BYPASS_FADE_SAMPLES` (512) samples so
+    /// there is never an audible click.
+    pub fn set_bypass(&mut self, bypass: bool) {
+        self.bypass_latch = bypass;
+    }
+
+    /// Process a single sample pair and return the processed output.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_l` — Left input sample (any `f64` value).
+    /// * `input_r` — Right input sample (any `f64` value).
+    /// * `params`  — All delay parameters for this sample.
+    ///
+    /// # Returns
+    ///
+    /// `(left_output, right_output)` in `f64`.  Convert to `f32` at the
+    /// very end of the plugin's output stage.
+    pub fn process(
+        &mut self,
+        input_l: f64,
+        input_r: f64,
+        params: &DelayParams,
+    ) -> (f64, f64) {
+        // ── 1. Stereo link: mirror L params to R when linked ──────────
+        let p = if params.stereo_link {
+            DelayParams {
+                input_mode_r: params.input_mode_l,
+                delay_time_r: params.delay_time_l,
+                low_cut_r: params.low_cut_l,
+                high_cut_r: params.high_cut_l,
+                feedback_r: params.feedback_l,
+                feedback_phase_r: params.feedback_phase_l,
+                crossfeed_rl: params.crossfeed_lr, // symmetric
+                note_r: params.note_l,
+                deviation_r: params.deviation_l,
+                halve_r: params.halve_l,
+                double_r: params.double_l,
+                output_mix_r: params.output_mix_l,
+                ..*params
+            }
+        } else {
+            params.clone()
+        };
+
+        // ── 2. Input mode selection ───────────────────────────────────
+        let in_l = Self::apply_input_mode(p.input_mode_l, input_l, input_r);
+        let in_r = Self::apply_input_mode(p.input_mode_r, input_l, input_r);
+
+        // ── 3. Effective delay times ──────────────────────────────────
+        let eff_delay_l = Self::effective_delay_time(
+            p.delay_time_l,
+            p.tempo_sync,
+            p.tempo_bpm,
+            p.note_l,
+            p.deviation_l,
+            p.halve_l,
+            p.double_l,
+        );
+        let eff_delay_r = Self::effective_delay_time(
+            p.delay_time_r,
+            p.tempo_sync,
+            p.tempo_bpm,
+            p.note_r,
+            p.deviation_r,
+            p.halve_r,
+            p.double_r,
+        );
+
+        // ── 4. Push new targets into smoothers ────────────────────────
+        self.smooth_delay_l.set_target(eff_delay_l);
+        self.smooth_delay_r.set_target(eff_delay_r);
+        self.smooth_low_cut_l.set_target(p.low_cut_l.max(20.0).min(20000.0));
+        self.smooth_low_cut_r.set_target(p.low_cut_r.max(20.0).min(20000.0));
+        self.smooth_high_cut_l.set_target(p.high_cut_l.max(20.0).min(20000.0));
+        self.smooth_high_cut_r.set_target(p.high_cut_r.max(20.0).min(20000.0));
+        self.smooth_feedback_l.set_target(p.feedback_l.clamp(0.0, 1.0));
+        self.smooth_feedback_r.set_target(p.feedback_r.clamp(0.0, 1.0));
+        self.smooth_crossfeed_lr.set_target(p.crossfeed_lr.clamp(0.0, 1.0));
+        self.smooth_crossfeed_rl.set_target(p.crossfeed_rl.clamp(0.0, 1.0));
+        self.smooth_mix_l.set_target(p.output_mix_l.clamp(0.0, 1.0));
+        self.smooth_mix_r.set_target(p.output_mix_r.clamp(0.0, 1.0));
+
+        // Bypass: either the param flag or the latch can engage bypass.
+        let bypass_active = p.bypass || self.bypass_latch;
+        self.bypass_gain.set_target(if bypass_active { 0.0 } else { 1.0 });
+
+        // ── 5. Advance smoothers and capture values ───────────────────
+        let s_delay_l = self.smooth_delay_l.next();
+        let s_delay_r = self.smooth_delay_r.next();
+        let s_lc_l = self.smooth_low_cut_l.next();
+        let s_lc_r = self.smooth_low_cut_r.next();
+        let s_hc_l = self.smooth_high_cut_l.next();
+        let s_hc_r = self.smooth_high_cut_r.next();
+        let s_fb_l = self.smooth_feedback_l.next();
+        let s_fb_r = self.smooth_feedback_r.next();
+        let s_cf_lr = self.smooth_crossfeed_lr.next();
+        let s_cf_rl = self.smooth_crossfeed_rl.next();
+        let s_mix_l = self.smooth_mix_l.next();
+        let s_mix_r = self.smooth_mix_r.next();
+        let s_bypass = self.bypass_gain.next();
+
+        // ── 6. Update biquad coefficients from smoothed cutoffs ───────
+        self.low_cut_l.update_coefficients(BiquadKind::HighPass, s_lc_l, self.sample_rate);
+        self.low_cut_r.update_coefficients(BiquadKind::HighPass, s_lc_r, self.sample_rate);
+        self.high_cut_l.update_coefficients(BiquadKind::LowPass, s_hc_l, self.sample_rate);
+        self.high_cut_r.update_coefficients(BiquadKind::LowPass, s_hc_r, self.sample_rate);
+
+        // ── 7. Read from delay lines (cubic interpolation) ────────────
+        let raw_l = self.delay_l.read(s_delay_l);
+        let raw_r = self.delay_r.read(s_delay_r);
+
+        // ── 8. Apply biquad filters (low-cut then high-cut) ───────────
+        let filt_l = self.high_cut_l.process(self.low_cut_l.process(raw_l));
+        let filt_r = self.high_cut_r.process(self.low_cut_r.process(raw_r));
+
+        // ── 9. Compute phase-inversion sign bits ──────────────────────
+        let sign_l: f64 = if p.feedback_phase_l { -1.0 } else { 1.0 };
+        let sign_r: f64 = if p.feedback_phase_r { -1.0 } else { 1.0 };
+        let sign_cf: f64 = if p.crossfeed_phase { -1.0 } else { 1.0 };
+
+        // ── 10. Routing: compute feedback signals for each delay line ──
+        let (fb_to_l, fb_to_r) = Self::compute_feedback(
+            p.routing,
+            s_fb_l,
+            s_fb_r,
+            s_cf_lr,
+            s_cf_rl,
+            sign_l,
+            sign_r,
+            sign_cf,
+            filt_l,
+            filt_r,
+        );
+
+        // ── 11. Write input + feedback into delay lines ───────────────
+        self.delay_l.write_and_advance(in_l + fb_to_l);
+        self.delay_r.write_and_advance(in_r + fb_to_r);
+
+        // ── 12. Output routing (Pan / Rotate modify wet outputs) ──────
+        let (wet_l, wet_r) = Self::apply_output_routing(
+            p.routing,
+            filt_l,
+            filt_r,
+            &mut self.lfo_phase,
+            self.sample_rate,
+        );
+
+        // ── 13. Dry/wet mix ───────────────────────────────────────────
+        //   out = dry * (1 - mix) + wet * mix
+        let out_l = in_l * (1.0 - s_mix_l) + wet_l * s_mix_l;
+        let out_r = in_r * (1.0 - s_mix_r) + wet_r * s_mix_r;
+
+        // ── 14. Soft bypass crossfade ──────────────────────────────────
+        //   When bypassed, fade towards the original (unprocessed) input.
+        //   bypass_gain = 1 → fully processed, 0 → fully bypassed.
+        let out_l = input_l + (out_l - input_l) * s_bypass;
+        let out_r = input_r + (out_r - input_r) * s_bypass;
+
+        (out_l, out_r)
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ──────────────────────────────────────────────────────────────────
+
+    /// Apply input-mode selection to derive a single channel's input from
+    /// the stereo pair.
+    #[inline]
+    fn apply_input_mode(mode: InputMode, in_l: f64, in_r: f64) -> f64 {
+        match mode {
+            InputMode::Off => 0.0,
+            InputMode::Left => in_l,
+            InputMode::Right => in_r,
+            InputMode::LeftPlusRight => (in_l + in_r) * 0.5,
+            InputMode::LeftMinusRight => (in_l - in_r) * 0.5,
+        }
+    }
+
+    /// Compute the effective delay time in seconds, accounting for tempo
+    /// sync, deviation, and the /:2 and ×2 modifiers.
+    ///
+    /// Returns a value clamped to `[0, MAX_DELAY_SECS]`.
+    fn effective_delay_time(
+        base_time: f64,
+        tempo_sync: bool,
+        bpm: f64,
+        note: NoteValue,
+        deviation_cents: f64,
+        halve: bool,
+        double: bool,
+    ) -> f64 {
+        // Start with either the tempo-synced value or the free-running time.
+        let mut t = if tempo_sync {
+            note.duration_seconds(bpm)
+        } else {
+            base_time
+        };
+
+        // Deviation: ±100 cents → ratio = 2^(cents / 1200).
+        let cents = deviation_cents.clamp(-100.0, 100.0);
+        t *= (2.0_f64).powf(cents / 1200.0);
+
+        // /:2 and ×2 modifiers (both active → net 1×).
+        if halve {
+            t *= 0.5;
+        }
+        if double {
+            t *= 2.0;
+        }
+
+        t.clamp(0.0, MAX_DELAY_SECS)
+    }
+
+    /// Compute the feedback signal that will be added to each delay
+    /// line's input, based on the active routing mode.
+    ///
+    /// Returns `(feedback_to_L_delay, feedback_to_R_delay)`.
+    ///
+    /// # Routing matrix per mode
+    ///
+    /// | Mode        | Self-L | Cross L→R | Cross R→L | Self-R |
+    /// |-------------|--------|-----------|-----------|--------|
+    /// | Customized  | fb_l   | cf_lr     | cf_rl     | fb_r   |
+    /// | Straight    | fb_l   | 0         | 0         | fb_r   |
+    /// | Crossfeed   | 0      | fb_l      | fb_r      | 0      |
+    /// | 90/10       | 0.9·fb | 0.1·fb    | 0.1·fb    | 0.9·fb |
+    /// | 10/90       | 0.1·fb | 0.9·fb    | 0.9·fb    | 0.1·fb |
+    /// | PingPong    | 0      | fb_l      | fb_r      | 0      |
+    /// | Pan         | fb_l   | cf_lr     | cf_rl     | fb_r   |
+    /// | Rotate      | LFO-modulated mix of self + cross |
+    #[inline]
+    fn compute_feedback(
+        routing: RoutingMode,
+        fb_l: f64,
+        fb_r: f64,
+        cf_lr: f64,
+        cf_rl: f64,
+        sign_l: f64,
+        sign_r: f64,
+        sign_cf: f64,
+        filt_l: f64,
+        filt_r: f64,
+    ) -> (f64, f64) {
+        // Pre-compute the basic signal contributions.
+        let self_l = filt_l * fb_l * sign_l;
+        let self_r = filt_r * fb_r * sign_r;
+        let cross_lr = filt_l * cf_lr * sign_cf; // L→R
+        let cross_rl = filt_r * cf_rl * sign_cf; // R→L
+
+        match routing {
+            RoutingMode::Customized => {
+                // Self + cross from params.
+                (self_l + cross_rl, self_r + cross_lr)
+            }
+
+            RoutingMode::Straight => {
+                // No crossfeed.
+                (self_l, self_r)
+            }
+
+            RoutingMode::Crossfeed => {
+                // All feedback crosses to opposite channel (no self).
+                let cross_l_to_r = filt_l * fb_l * sign_l;
+                let cross_r_to_l = filt_r * fb_r * sign_r;
+                (cross_r_to_l, cross_l_to_r)
+            }
+
+            RoutingMode::NinetyTen => {
+                // 90 % self, 10 % cross.
+                let fb_to_l = filt_l * fb_l * sign_l * 0.9 + filt_r * fb_r * sign_r * 0.1;
+                let fb_to_r = filt_r * fb_r * sign_r * 0.9 + filt_l * fb_l * sign_l * 0.1;
+                (fb_to_l, fb_to_r)
+            }
+
+            RoutingMode::TenNinety => {
+                // 10 % self, 90 % cross.
+                let fb_to_l = filt_l * fb_l * sign_l * 0.1 + filt_r * fb_r * sign_r * 0.9;
+                let fb_to_r = filt_r * fb_r * sign_r * 0.1 + filt_l * fb_l * sign_l * 0.9;
+                (fb_to_l, fb_to_r)
+            }
+
+            RoutingMode::PingPong => {
+                // Cross only, no self-feedback (signal bounces L↔R).
+                let cross_l_to_r = filt_l * fb_l * sign_l;
+                let cross_r_to_l = filt_r * fb_r * sign_r;
+                (cross_r_to_l, cross_l_to_r)
+            }
+
+            RoutingMode::Pan => {
+                // Same as Customized for feedback; output stage swaps.
+                (self_l + cross_rl, self_r + cross_lr)
+            }
+
+            RoutingMode::Rotate => {
+                // Feedback matrix is identical to Customized here;
+                // the rotation effect is applied at the output stage
+                // via equal-power panning.
+                (self_l + cross_rl, self_r + cross_lr)
+            }
+        }
+    }
+
+    /// Apply routing-specific transformations to the wet (filtered
+    /// delayed) signal before the dry/wet mix.
+    ///
+    /// - **Pan**: Swap L↔R outputs for a wide opposing panning effect.
+    /// - **Rotate**: Apply equal-power panning modulated by the internal
+    ///   LFO, producing a smooth rotary-speaker sweep.
+    /// - All other modes pass the wet signals through unchanged.
+    #[inline]
+    fn apply_output_routing(
+        routing: RoutingMode,
+        wet_l: f64,
+        wet_r: f64,
+        lfo_phase: &mut f64,
+        sample_rate: f64,
+    ) -> (f64, f64) {
+        match routing {
+            RoutingMode::Pan => {
+                // Swap: L delay appears on the right output and vice
+                // versa, creating a wide opposing-pan effect.
+                (wet_r, wet_l)
+            }
+
+            RoutingMode::Rotate => {
+                // Advance the rotation LFO.
+                *lfo_phase += TAU * ROTATE_LFO_HZ / sample_rate;
+                if *lfo_phase >= TAU {
+                    *lfo_phase -= TAU;
+                }
+
+                // Equal-power (constant-amplitude) panning.
+                //   cos/sin give a smooth rotation of the stereo image.
+                let cos_p = lfo_phase.cos();
+                let sin_p = lfo_phase.sin();
+
+                let out_l = wet_l * cos_p + wet_r * sin_p;
+                let out_r = -wet_l * sin_p + wet_r * cos_p;
+                (out_l, out_r)
+            }
+
+            // All other modes: pass through unchanged.
+            _ => (wet_l, wet_r),
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Tests
+// ────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── NoteValue durations ───────────────────────────────────────────
+
+    #[test]
+    fn note_value_quarter_at_120_bpm() {
+        // Quarter note at 120 BPM = 0.5 seconds.
+        let dur = NoteValue::Quarter.duration_seconds(120.0);
+        assert!((dur - 0.5).abs() < 1e-9, "expected 0.5, got {dur}");
+    }
+
+    #[test]
+    fn note_value_whole_at_60_bpm() {
+        // Whole note at 60 BPM = 4 beats * (60/60) = 4 seconds.
+        let dur = NoteValue::Whole.duration_seconds(60.0);
+        assert!((dur - 4.0).abs() < 1e-9, "expected 4.0, got {dur}");
+    }
+
+    #[test]
+    fn note_value_eighth_triplet_at_120_bpm() {
+        // 1/3 beat at 120 BPM = (1/3) * 0.5 = 1/6 ≈ 0.16667 s.
+        let dur = NoteValue::EighthTriplet.duration_seconds(120.0);
+        let expected = 1.0 / 6.0;
+        assert!(
+            (dur - expected).abs() < 1e-9,
+            "expected {expected}, got {dur}"
+        );
+    }
+
+    #[test]
+    fn note_value_sixty_fourth_at_120_bpm() {
+        // 0.0625 beats at 120 BPM = 0.0625 * 0.5 = 0.03125 s.
+        let dur = NoteValue::SixtyFourth.duration_seconds(120.0);
+        assert!((dur - 0.03125).abs() < 1e-9, "expected 0.03125, got {dur}");
+    }
+
+    // ── SmoothedValue ─────────────────────────────────────────────────
+
+    #[test]
+    fn smoother_reaches_target() {
+        let mut s = SmoothedValue::new(0.0, 64);
+        s.set_target(1.0);
+        let mut val = 0.0;
+        for _ in 0..64 {
+            val = s.next();
+        }
+        assert!((val - 1.0).abs() < 1e-12, "expected 1.0, got {val}");
+    }
+
+    #[test]
+    fn smoother_stays_at_target() {
+        let mut s = SmoothedValue::new(0.5, 64);
+        for _ in 0..200 {
+            let v = s.next();
+            assert!((v - 0.5).abs() < 1e-12);
+        }
+    }
+
+    // ── DelayLine basics ──────────────────────────────────────────────
+
+    #[test]
+    fn delay_line_read_write() {
+        let mut dl = DelayLine::new(44100.0, 44100.0);
+        // Write 5 samples then read with a 3-sample delay.
+        dl.write_and_advance(10.0);
+        dl.write_and_advance(20.0);
+        dl.write_and_advance(30.0);
+        dl.write_and_advance(40.0);
+        dl.write_and_advance(50.0);
+        // At this point write_pos = 5.  A 3-sample delay should read
+        // from position 2, which holds 30.0.
+        let val = dl.read(3.0 / 44100.0);
+        assert!(
+            (val - 30.0).abs() < 1e-6,
+            "expected ~30.0, got {val}"
+        );
+    }
+
+    // ── BiquadFilter ──────────────────────────────────────────────────
+
+    #[test]
+    fn biquad_passes_dc_when_lowpass_at_nyquist() {
+        let mut bq = BiquadFilter::new();
+        bq.update_coefficients(BiquadKind::LowPass, 20000.0, 44100.0);
+        // A low-pass well above the signal frequency should pass DC.
+        let mut out = 0.0;
+        for _ in 0..1000 {
+            out = bq.process(1.0);
+        }
+        assert!(
+            (out - 1.0).abs() < 0.01,
+            "low-pass should pass DC, got {out}"
+        );
+    }
+
+    #[test]
+    fn biquad_rejects_dc_when_highpass_at_20hz() {
+        let mut bq = BiquadFilter::new();
+        bq.update_coefficients(BiquadKind::HighPass, 20.0, 44100.0);
+        // A high-pass at 20 Hz should reject DC (0 Hz).
+        let mut out = 1.0;
+        for _ in 0..100_000 {
+            out = bq.process(1.0);
+        }
+        assert!(
+            out.abs() < 0.01,
+            "high-pass should reject DC, got {out}"
+        );
+    }
+
+    // ── DelayEngine integration ───────────────────────────────────────
+
+    #[test]
+    fn engine_process_does_not_crash() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams::default();
+        for _ in 0..1000 {
+            let (l, r) = engine.process(0.1, -0.1, &params);
+            assert!(l.is_finite(), "left output is not finite: {l}");
+            assert!(r.is_finite(), "right output is not finite: {r}");
+        }
+    }
+
+    #[test]
+    fn engine_bypass_outputs_dry() {
+        let mut engine = DelayEngine::new(44100.0);
+        let mut params = DelayParams::default();
+        params.bypass = true;
+
+        // Run enough samples for the bypass crossfade to complete.
+        for _ in 0..2000 {
+            engine.process(0.5, -0.3, &params);
+        }
+
+        let (l, r) = engine.process(0.5, -0.3, &params);
+        assert!(
+            (l - 0.5).abs() < 0.01,
+            "bypassed left should ≈ dry, got {l}"
+        );
+        assert!(
+            (r - (-0.3)).abs() < 0.01,
+            "bypassed right should ≈ dry, got {r}"
+        );
+    }
+
+    #[test]
+    fn engine_reset_clears_state() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            feedback_l: 0.9,
+            feedback_r: 0.9,
+            ..DelayParams::default()
+        };
+        // Feed signal to build up feedback.
+        for _ in 0..5000 {
+            engine.process(1.0, 1.0, &params);
+        }
+        engine.reset();
+        // After reset, processing silence should output near-zero.
+        let silence_params = DelayParams {
+            feedback_l: 0.5,
+            feedback_r: 0.5,
+            ..DelayParams::default()
+        };
+        let mut max_val = 0.0_f64;
+        for _ in 0..100 {
+            let (l, r) = engine.process(0.0, 0.0, &silence_params);
+            max_val = max_val.max(l.abs()).max(r.abs());
+        }
+        assert!(
+            max_val < 1e-10,
+            "after reset, output should be near-zero, got max {max_val}"
+        );
+    }
+
+    #[test]
+    fn engine_all_routing_modes_run() {
+        let modes = [
+            RoutingMode::Customized,
+            RoutingMode::Straight,
+            RoutingMode::Crossfeed,
+            RoutingMode::NinetyTen,
+            RoutingMode::TenNinety,
+            RoutingMode::PingPong,
+            RoutingMode::Pan,
+            RoutingMode::Rotate,
+        ];
+        for mode in modes {
+            let mut engine = DelayEngine::new(44100.0);
+            let params = DelayParams {
+                routing: mode,
+                feedback_l: 0.5,
+                feedback_r: 0.5,
+                crossfeed_lr: 0.3,
+                crossfeed_rl: 0.3,
+                ..DelayParams::default()
+            };
+            for _ in 0..500 {
+                let (l, r) = engine.process(0.1, 0.1, &params);
+                assert!(l.is_finite(), "mode {mode:?}: L not finite");
+                assert!(r.is_finite(), "mode {mode:?}: R not finite");
+            }
+        }
+    }
+
+    #[test]
+    fn engine_all_input_modes_run() {
+        let modes = [
+            InputMode::Off,
+            InputMode::Left,
+            InputMode::Right,
+            InputMode::LeftPlusRight,
+            InputMode::LeftMinusRight,
+        ];
+        for ml in modes {
+            for mr in modes {
+                let mut engine = DelayEngine::new(44100.0);
+                let params = DelayParams {
+                    input_mode_l: ml,
+                    input_mode_r: mr,
+                    ..DelayParams::default()
+                };
+                for _ in 0..200 {
+                    let (l, r) = engine.process(0.1, 0.1, &params);
+                    assert!(l.is_finite(), "input {ml:?}/{mr:?}: L not finite");
+                    assert!(r.is_finite(), "input {ml:?}/{mr:?}: R not finite");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn engine_tempo_sync_produces_correct_delay() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            tempo_sync: true,
+            tempo_bpm: 120.0,
+            note_l: NoteValue::Quarter,  // 0.5 s
+            note_r: NoteValue::Quarter,
+            feedback_l: 0.0,  // No feedback for cleaner measurement.
+            feedback_r: 0.0,
+            output_mix_l: 1.0,  // Fully wet.
+            output_mix_r: 1.0,
+            ..DelayParams::default()
+        };
+
+        // Feed an impulse at sample 0, then silence.
+        let mut results = Vec::new();
+        for i in 0..30000 {
+            let in_l = if i == 0 { 1.0 } else { 0.0 };
+            let in_r = if i == 0 { 1.0 } else { 0.0 };
+            let (l, _r) = engine.process(in_l, in_r, &params);
+            results.push(l);
+        }
+
+        // The impulse should appear at approximately sample 22050
+        // (0.5 s × 44100 Hz).  Allow ±10 samples tolerance for the
+        // smoothing ramp and interpolation.
+        let expected_sample = 22050_usize;
+        let peak_sample = results
+            .iter()
+            .enumerate()
+            .skip(100) // skip initial transient
+            .max_by(|(_, a), (_, b)| a.abs().partial_cmp(&b.abs()).unwrap())
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        assert!(
+            (peak_sample as isize - expected_sample as isize).abs() < 20,
+            "tempo-synced delay peak at sample {peak_sample}, expected ≈{expected_sample}"
+        );
+    }
+
+    #[test]
+    fn effective_delay_time_halve_and_double() {
+        // 0.5 s, halved → 0.25 s.
+        let t = DelayEngine::effective_delay_time(
+            0.5, false, 120.0, NoteValue::Quarter, 0.0, true, false,
+        );
+        assert!((t - 0.25).abs() < 1e-12, "expected 0.25, got {t}");
+
+        // 0.5 s, doubled → 1.0 s.
+        let t = DelayEngine::effective_delay_time(
+            0.5, false, 120.0, NoteValue::Quarter, 0.0, false, true,
+        );
+        assert!((t - 1.0).abs() < 1e-12, "expected 1.0, got {t}");
+
+        // Both halve and double → net 1×.
+        let t = DelayEngine::effective_delay_time(
+            0.5, false, 120.0, NoteValue::Quarter, 0.0, true, true,
+        );
+        assert!((t - 0.5).abs() < 1e-12, "expected 0.5, got {t}");
+    }
+
+    #[test]
+    fn effective_delay_time_deviation() {
+        // +100 cents = 2^(100/1200) ≈ 1.05946 multiplier.
+        let t = DelayEngine::effective_delay_time(
+            1.0, false, 120.0, NoteValue::Quarter, 100.0, false, false,
+        );
+        let expected = 2.0_f64.powf(100.0 / 1200.0);
+        assert!((t - expected).abs() < 1e-12, "expected {expected}, got {t}");
+    }
+}
