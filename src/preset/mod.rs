@@ -257,7 +257,7 @@ impl PresetManager {
         }
 
         // Sort alphabetically by name for consistent UI ordering.
-        presets.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        presets.sort_by_key(|preset| preset.name.to_lowercase());
 
         Ok(presets)
     }
