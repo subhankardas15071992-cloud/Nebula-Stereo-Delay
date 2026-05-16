@@ -206,10 +206,7 @@ impl MidiCcValues {
     /// responsible for valid input).
     #[inline]
     fn index(channel: u8, cc: u8) -> usize {
-        debug_assert!(
-            channel < 16,
-            "MIDI channel must be 0–15, got {channel}"
-        );
+        debug_assert!(channel < 16, "MIDI channel must be 0–15, got {channel}");
         debug_assert!(cc < 128, "MIDI CC must be 0–127, got {cc}");
         (channel as usize) * 128 + (cc as usize)
     }
@@ -512,8 +509,7 @@ impl MidiLearnState {
             // a mapping after the rollback.
             let mapped_ids: HashSet<String> =
                 self.mappings.iter().map(|m| m.param_id.clone()).collect();
-            self.disabled_params
-                .retain(|id| mapped_ids.contains(id));
+            self.disabled_params.retain(|id| mapped_ids.contains(id));
         }
     }
 
@@ -602,10 +598,7 @@ impl MidiLearnState {
     ///
     /// Returns a [`serde_json::Error`] if the input is not valid JSON or
     /// does not match the expected `Vec<MidiMapping>` structure.
-    pub fn deserialize_mappings(
-        &mut self,
-        data: &str,
-    ) -> Result<(), serde_json::Error> {
+    pub fn deserialize_mappings(&mut self, data: &str) -> Result<(), serde_json::Error> {
         let restored: Vec<MidiMapping> = serde_json::from_str(data)?;
         self.mappings = restored;
         self.disabled_params.clear();

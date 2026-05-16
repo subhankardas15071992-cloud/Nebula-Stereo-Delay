@@ -22,9 +22,7 @@
 
 use std::f64::consts::TAU;
 
-use nebula_stereo_delay::dsp::{
-    DelayEngine, DelayParams, InputMode, NoteValue, RoutingMode,
-};
+use nebula_stereo_delay::dsp::{DelayEngine, DelayParams, InputMode, NoteValue, RoutingMode};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -332,9 +330,9 @@ fn generate_sine(freq: f64, duration_secs: f64, amplitude: f64, sample_rate: f64
 /// Apply a Hann window in-place.
 fn hann_window(data: &mut [f64]) {
     let n = data.len();
-    for i in 0..n {
+    for (i, sample) in data.iter_mut().enumerate() {
         let w = 0.5 * (1.0 - (TAU * i as f64 / n as f64 / 2.0).cos());
-        data[i] *= w;
+        *sample *= w;
     }
 }
 
@@ -430,7 +428,7 @@ impl BiquadHelper {
         let omega = TAU * fc / sr;
         let sin_w = omega.sin();
         let cos_w = omega.cos();
-        let q = 0.707_106_781_186_547_6; // 1/√2 Butterworth
+        let q = std::f64::consts::FRAC_1_SQRT_2; // 1/√2 Butterworth
         let alpha = sin_w / (2.0 * q);
 
         let b0 = (1.0 + cos_w) * 0.5;
@@ -455,9 +453,9 @@ impl BiquadHelper {
 
     /// Process a single sample through the biquad (Direct Form I).
     fn process(&mut self, input: f64) -> f64 {
-        let output =
-            self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1
-                - self.a2 * self.y2;
+        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = input;
         self.y2 = self.y1;
@@ -481,6 +479,15 @@ struct GoldenReferenceDelay {
     sample_rate: f64,
 }
 
+#[derive(Clone, Copy)]
+struct GoldenReferenceParams {
+    delay_time_l: f64,
+    delay_time_r: f64,
+    feedback_l: f64,
+    feedback_r: f64,
+    mix: f64,
+}
+
 impl GoldenReferenceDelay {
     fn new(sample_rate: f64) -> Self {
         let buf_size = (10.0 * sample_rate).ceil() as usize;
@@ -495,18 +502,9 @@ impl GoldenReferenceDelay {
     }
 
     /// Process one sample pair. Uses no interpolation (nearest-sample read).
-    fn process(
-        &mut self,
-        input_l: f64,
-        input_r: f64,
-        delay_time_l: f64,
-        delay_time_r: f64,
-        feedback_l: f64,
-        feedback_r: f64,
-        mix: f64,
-    ) -> (f64, f64) {
-        let delay_samples_l = (delay_time_l * self.sample_rate).round() as usize;
-        let delay_samples_r = (delay_time_r * self.sample_rate).round() as usize;
+    fn process(&mut self, input_l: f64, input_r: f64, params: GoldenReferenceParams) -> (f64, f64) {
+        let delay_samples_l = (params.delay_time_l * self.sample_rate).round() as usize;
+        let delay_samples_r = (params.delay_time_r * self.sample_rate).round() as usize;
         let delay_samples_l = delay_samples_l.max(1).min(self.buffer_l.len() - 2);
         let delay_samples_r = delay_samples_r.max(1).min(self.buffer_r.len() - 2);
 
@@ -517,13 +515,13 @@ impl GoldenReferenceDelay {
         let delayed_r = self.buffer_r[read_pos_r];
 
         // Write input + feedback.
-        self.buffer_l[self.write_pos] = input_l + delayed_l * feedback_l;
-        self.buffer_r[self.write_pos] = input_r + delayed_r * feedback_r;
+        self.buffer_l[self.write_pos] = input_l + delayed_l * params.feedback_l;
+        self.buffer_r[self.write_pos] = input_r + delayed_r * params.feedback_r;
         self.write_pos = (self.write_pos + 1) & self.mask;
 
         // Dry/wet mix.
-        let out_l = input_l * (1.0 - mix) + delayed_l * mix;
-        let out_r = input_r * (1.0 - mix) + delayed_r * mix;
+        let out_l = input_l * (1.0 - params.mix) + delayed_l * params.mix;
+        let out_r = input_r * (1.0 - params.mix) + delayed_r * params.mix;
         (out_l, out_r)
     }
 
@@ -596,12 +594,21 @@ fn lufs_stability_test() {
 
     // Skip the first window (may contain transient from warm-up transition).
     if lufs_values.len() < 3 {
-        panic!("Not enough LUFS windows computed. Need at least 3, got {}", lufs_values.len());
+        panic!(
+            "Not enough LUFS windows computed. Need at least 3, got {}",
+            lufs_values.len()
+        );
     }
 
     let steady_state_lufs = &lufs_values[1..];
-    let min_lufs = steady_state_lufs.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_lufs = steady_state_lufs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min_lufs = steady_state_lufs
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min);
+    let max_lufs = steady_state_lufs
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     let variation = max_lufs - min_lufs;
 
     eprintln!(
@@ -923,11 +930,8 @@ fn dynamic_responsiveness_test() {
 
     // Build alternating signal: 2 s silence, 2 s full-scale, 2 s silence.
     let mut input = vec![0.0_f64; num_samples];
-    for i in half_period..(2 * half_period) {
-        if i < num_samples {
-            input[i] = 1.0;
-        }
-    }
+    let active_end = (2 * half_period).min(num_samples);
+    input[half_period..active_end].fill(1.0);
 
     let mut engine = DelayEngine::new(SR);
     let params = DelayParams {
@@ -1073,7 +1077,9 @@ fn stereo_image_coherence_test() {
         let skip = WARMUP_SAMPLES;
         let corr_pp = stereo_correlation(&out_l[skip..], &out_r[skip..]);
 
-        eprintln!("[DIAG] Stereo coherence — PingPong (L-only, broadband): correlation = {corr_pp:.4}");
+        eprintln!(
+            "[DIAG] Stereo coherence — PingPong (L-only, broadband): correlation = {corr_pp:.4}"
+        );
 
         assert!(
             corr_pp < 0.5,
@@ -1131,8 +1137,10 @@ fn stereo_image_coherence_test() {
         warmup_engine(&mut engine_cf, &params_crossfeed);
 
         let bb_r = vec![0.0_f64; bb_input.len()];
-        let (out_l_s, out_r_s) = process_block_stereo(&mut engine_str, &bb_input, &bb_r, &params_straight);
-        let (out_l_cf, out_r_cf) = process_block_stereo(&mut engine_cf, &bb_input, &bb_r, &params_crossfeed);
+        let (out_l_s, out_r_s) =
+            process_block_stereo(&mut engine_str, &bb_input, &bb_r, &params_straight);
+        let (out_l_cf, out_r_cf) =
+            process_block_stereo(&mut engine_cf, &bb_input, &bb_r, &params_crossfeed);
 
         let skip = WARMUP_SAMPLES;
         let corr_straight = stereo_correlation(&out_l_s[skip..], &out_r_s[skip..]);
@@ -1451,8 +1459,16 @@ fn multi_source_musical_benchmarking() {
         let mid_lc = band_energy(&spectrum_lc_wet, 900.0, 1100.0, SR, FFT_SIZE);
 
         // Normalise: compare bass attenuation relative to mid.
-        let bass_rel_flat = if mid_flat > 1e-20 { bass_flat / mid_flat } else { 0.0 };
-        let bass_rel_lc = if mid_lc > 1e-20 { bass_lc / mid_lc } else { 0.0 };
+        let bass_rel_flat = if mid_flat > 1e-20 {
+            bass_flat / mid_flat
+        } else {
+            0.0
+        };
+        let bass_rel_lc = if mid_lc > 1e-20 {
+            bass_lc / mid_lc
+        } else {
+            0.0
+        };
 
         let bass_atten_db = if bass_rel_flat > 1e-20 && bass_rel_lc > 1e-20 {
             linear_to_db(bass_rel_lc / bass_rel_flat)
@@ -1525,8 +1541,16 @@ fn multi_source_musical_benchmarking() {
         let mid_flat = band_energy(&spectrum_flat_ref, 900.0, 1100.0, SR, FFT_SIZE);
         let mid_hc = band_energy(&spectrum_hc, 900.0, 1100.0, SR, FFT_SIZE);
 
-        let treble_rel_flat = if mid_flat > 1e-20 { treble_flat / mid_flat } else { 0.0 };
-        let treble_rel_hc = if mid_hc > 1e-20 { treble_hc / mid_hc } else { 0.0 };
+        let treble_rel_flat = if mid_flat > 1e-20 {
+            treble_flat / mid_flat
+        } else {
+            0.0
+        };
+        let treble_rel_hc = if mid_hc > 1e-20 {
+            treble_hc / mid_hc
+        } else {
+            0.0
+        };
 
         let treble_atten_db = if treble_rel_flat > 1e-20 && treble_rel_hc > 1e-20 {
             linear_to_db(treble_rel_hc / treble_rel_flat)
@@ -1691,7 +1715,9 @@ fn groove_preservation_test() {
         // Find the nearest detected transient to the expected tap position.
         let nearest = detected
             .iter()
-            .filter(|&&d| (d as isize - expected_tap as isize).unsigned_abs() < (SR * 0.05) as usize)
+            .filter(|&&d| {
+                (d as isize - expected_tap as isize).unsigned_abs() < (SR * 0.05) as usize
+            })
             .min_by_key(|&&d| (d as isize - expected_tap as isize).unsigned_abs());
 
         if let Some(&tap_pos) = nearest {
@@ -1790,12 +1816,19 @@ fn golden_industry_standard_reference() {
 
     // ── Process through the golden reference ─────────────────────────
     let mut golden = GoldenReferenceDelay::new(SR);
+    let golden_params = GoldenReferenceParams {
+        delay_time_l: delay_time,
+        delay_time_r: delay_time,
+        feedback_l: feedback,
+        feedback_r: feedback,
+        mix,
+    };
 
     // Warm up both with the same signal to let smoothers converge.
     let warmup_input = generate_sine(1000.0, WARMUP_SAMPLES as f64 / SR, 0.5, SR);
     for &s in &warmup_input {
         engine.process(s, s, &params);
-        golden.process(s, s, delay_time, delay_time, feedback, feedback, mix);
+        golden.process(s, s, golden_params);
     }
 
     // Now process the test signal through both.
@@ -1809,7 +1842,7 @@ fn golden_industry_standard_reference() {
         plugin_out_l.push(pl);
         plugin_out_r.push(pr);
 
-        let (gl, gr) = golden.process(s, s, delay_time, delay_time, feedback, feedback, mix);
+        let (gl, gr) = golden.process(s, s, golden_params);
         golden_out_l.push(gl);
         golden_out_r.push(gr);
     }
@@ -1838,14 +1871,10 @@ fn golden_industry_standard_reference() {
     let signal_rms = rms(&plugin_out_l[skip..]);
     let residual_rms = rms(&residual_l);
 
-    eprintln!(
-        "[DIAG] Golden reference comparison (L channel, skipping first 200 ms):"
-    );
+    eprintln!("[DIAG] Golden reference comparison (L channel, skipping first 200 ms):");
     eprintln!("  Signal RMS: {signal_rms:.6}");
     eprintln!("  Residual RMS: {residual_rms:.6}");
-    eprintln!(
-        "  Residual energy relative to signal: {relative_db:.1} dB"
-    );
+    eprintln!("  Residual energy relative to signal: {relative_db:.1} dB");
 
     assert!(
         relative_db < -30.0,
@@ -1853,7 +1882,5 @@ fn golden_industry_standard_reference() {
          Residual RMS = {residual_rms:.6}, Signal RMS = {signal_rms:.6}"
     );
 
-    eprintln!(
-        "[PASS] Golden Reference: residual = {relative_db:.1} dB (< -30 dB)"
-    );
+    eprintln!("[PASS] Golden Reference: residual = {relative_db:.1} dB (< -30 dB)");
 }

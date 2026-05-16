@@ -16,12 +16,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nebula_stereo_delay::dsp::{
-    DelayEngine, DelayParams, InputMode, NoteValue, RoutingMode,
-};
+use nebula_stereo_delay::dsp::{DelayEngine, DelayParams, InputMode, NoteValue, RoutingMode};
 
 /// Default sample rate used across all tests unless otherwise specified.
 const SR: f64 = 44_100.0;
+
+type TestSignalGenerator = Box<dyn Fn(usize) -> f64>;
 
 /// Threshold below which f64 values are considered denormal and flushed to zero.
 /// Matches the plugin's own `DENORMAL_THRESHOLD_F64`.
@@ -41,7 +41,11 @@ fn process_block(
     input_r: &[f64],
     params: &DelayParams,
 ) -> Vec<(f64, f64)> {
-    assert_eq!(input_l.len(), input_r.len(), "input slices must match length");
+    assert_eq!(
+        input_l.len(),
+        input_r.len(),
+        "input slices must match length"
+    );
     input_l
         .iter()
         .zip(input_r.iter())
@@ -192,9 +196,7 @@ fn buffer_size_torture_test() {
             let max_diff = reference_output
                 .iter()
                 .zip(all_output.iter())
-                .map(|((rl, rr), (al, ar))| {
-                    (rl - al).abs().max((rr - ar).abs())
-                })
+                .map(|((rl, rr), (al, ar))| (rl - al).abs().max((rr - ar).abs()))
                 .fold(0.0_f64, f64::max);
 
             assert!(
@@ -205,8 +207,10 @@ fn buffer_size_torture_test() {
         }
     }
 
-    eprintln!("[PASS] Buffer size torture: all {} buffer sizes produce consistent output",
-              buffer_sizes.len());
+    eprintln!(
+        "[PASS] Buffer size torture: all {} buffer sizes produce consistent output",
+        buffer_sizes.len()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -280,11 +284,8 @@ fn per_block_timing_test() {
 fn worst_case_input_test() {
     let num_samples = (SR * 2.0) as usize; // 2 seconds
 
-    let test_cases: &[(&str, Box<dyn Fn(usize) -> f64>)] = &[
-        (
-            "Full-scale DC (1.0)",
-            Box::new(|_| 1.0),
-        ),
+    let test_cases: &[(&str, TestSignalGenerator)] = &[
+        ("Full-scale DC (1.0)", Box::new(|_| 1.0)),
         (
             "Alternating +/-1.0",
             Box::new(|i| if i % 2 == 0 { 1.0 } else { -1.0 }),
@@ -454,7 +455,7 @@ fn long_run_cpu_stability_test() {
     let params = DelayParams {
         delay_time_l: 2.0, // Long delay.
         delay_time_r: 2.0,
-        feedback_l: 0.95,   // High feedback.
+        feedback_l: 0.95, // High feedback.
         feedback_r: 0.95,
         output_mix_l: 0.8,
         output_mix_r: 0.8,
@@ -463,7 +464,6 @@ fn long_run_cpu_stability_test() {
 
     // Feed a brief impulse at the start, then silence.
     let mut max_output: f64 = 0.0;
-    let mut _output_samples_checked = 0;
     let mut growing = false;
 
     // Track peak output over 1-second windows to detect unbounded growth.
@@ -477,18 +477,18 @@ fn long_run_cpu_stability_test() {
 
         assert!(
             out_l.is_finite(),
-            "NaN/Inf in L output at sample {i} ({:.3} s)", i as f64 / SR
+            "NaN/Inf in L output at sample {i} ({:.3} s)",
+            i as f64 / SR
         );
         assert!(
             out_r.is_finite(),
-            "NaN/Inf in R output at sample {i} ({:.3} s)", i as f64 / SR
+            "NaN/Inf in R output at sample {i} ({:.3} s)",
+            i as f64 / SR
         );
 
         let peak = out_l.abs().max(out_r.abs());
         max_output = max_output.max(peak);
         window_peak = window_peak.max(peak);
-        _output_samples_checked += 1;
-
         // Check window peaks for unbounded growth.
         if (i + 1) % window_size == 0 {
             // After the first few seconds, the output should be decaying
@@ -498,7 +498,9 @@ fn long_run_cpu_stability_test() {
                 growing = true;
                 eprintln!(
                     "  WARNING: Output growing at {:.1} s: prev_peak = {:.6}, curr_peak = {:.6}",
-                    i as f64 / SR, prev_window_peak, window_peak
+                    i as f64 / SR,
+                    prev_window_peak,
+                    window_peak
                 );
             }
             prev_window_peak = window_peak;
@@ -551,15 +553,14 @@ fn iterative_stress_loop_test() {
 
         // The very first sample's output should be consistent across
         // iterations (same input, fresh engine state).
-        if reference_first_output.is_none() {
-            reference_first_output = Some((out_l, out_r));
-        } else {
-            let (ref_l, ref_r) = reference_first_output.unwrap();
+        if let Some((ref_l, ref_r)) = reference_first_output {
             assert!(
                 (out_l - ref_l).abs() < 1e-15 && (out_r - ref_r).abs() < 1e-15,
                 "Iteration {iter}: first-sample output ({out_l:.15}, {out_r:.15}) \
                  differs from reference ({ref_l:.15}, {ref_r:.15})"
             );
+        } else {
+            reference_first_output = Some((out_l, out_r));
         }
 
         // Process a few more samples to exercise the delay lines.
@@ -599,9 +600,8 @@ fn parameter_automaton_test() {
     let mut params = DelayParams::default();
 
     // Input: continuous sine wave.
-    let input_gen = |i: usize| -> f64 {
-        (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR).sin() * 0.5
-    };
+    let input_gen =
+        |i: usize| -> f64 { (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR).sin() * 0.5 };
 
     let mut prev_out_l: f64 = 0.0;
     let mut prev_out_r: f64 = 0.0;
@@ -832,7 +832,10 @@ fn state_reset_test() {
     for i in 0..5000 {
         let in_val = (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR).sin() * 0.5;
         let (l, r) = engine.process(in_val, in_val, &normal_params);
-        assert!(l.is_finite() && r.is_finite(), "Non-finite output after reset at sample {i}");
+        assert!(
+            l.is_finite() && r.is_finite(),
+            "Non-finite output after reset at sample {i}"
+        );
     }
 
     eprintln!(
@@ -1062,8 +1065,12 @@ fn randomized_fuzz_test() {
         };
 
         // Generate random input signal.
-        let input_l: Vec<f64> = (0..buffer_len).map(|_| prng.next_range(-1.0, 1.0)).collect();
-        let input_r: Vec<f64> = (0..buffer_len).map(|_| prng.next_range(-1.0, 1.0)).collect();
+        let input_l: Vec<f64> = (0..buffer_len)
+            .map(|_| prng.next_range(-1.0, 1.0))
+            .collect();
+        let input_r: Vec<f64> = (0..buffer_len)
+            .map(|_| prng.next_range(-1.0, 1.0))
+            .collect();
 
         // Process and validate.
         for (s, (&l, &r)) in input_l.iter().zip(input_r.iter()).enumerate() {
@@ -1071,9 +1078,7 @@ fn randomized_fuzz_test() {
 
             if !out_l.is_finite() || !out_r.is_finite() {
                 failures += 1;
-                eprintln!(
-                    "  Fuzz failure at iter={iter}, sample={s}: L={out_l:e}, R={out_r:e}"
-                );
+                eprintln!("  Fuzz failure at iter={iter}, sample={s}: L={out_l:e}, R={out_r:e}");
             }
         }
     }
@@ -1083,9 +1088,7 @@ fn randomized_fuzz_test() {
         "Fuzz test: {failures} non-finite outputs detected across {iterations} iterations (seed={seed:#018x})"
     );
 
-    eprintln!(
-        "[PASS] Randomized fuzz: {iterations} iterations with seed={seed:#018x}, no NaN/Inf"
-    );
+    eprintln!("[PASS] Randomized fuzz: {iterations} iterations with seed={seed:#018x}, no NaN/Inf");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1174,8 +1177,8 @@ fn null_consistency_test() {
 /// of the input envelope.
 #[test]
 fn envelope_tracking_stability_test() {
-    let ramp_up_samples = (SR * 1.0) as usize;   // 1 second ramp up.
-    let ramp_down_samples = (SR * 1.0) as usize;  // 1 second ramp down.
+    let ramp_up_samples = (SR * 1.0) as usize; // 1 second ramp up.
+    let ramp_down_samples = (SR * 1.0) as usize; // 1 second ramp down.
     let total_samples = ramp_up_samples + ramp_down_samples;
 
     let mut engine = DelayEngine::new(SR);

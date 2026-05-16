@@ -64,8 +64,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[cfg(feature = "plugin")]
-use nih_plug::params::Param;
-#[cfg(feature = "plugin")]
 use nih_plug::prelude::*;
 
 #[cfg(feature = "plugin")]
@@ -112,7 +110,7 @@ pub struct NebulaStereoDelay {
     engine: DelayEngine,
     state_manager: StateManager,
     midi_cc: MidiCcValues,
-    preset_manager: PresetManager,
+    _preset_manager: PresetManager,
     sample_rate: f64,
 }
 
@@ -127,7 +125,7 @@ impl Default for NebulaStereoDelay {
             engine: DelayEngine::new(sample_rate),
             params,
             midi_cc: MidiCcValues::new(),
-            preset_manager: PresetManager::new(),
+            _preset_manager: PresetManager::new(),
             sample_rate,
         }
     }
@@ -141,8 +139,12 @@ impl Plugin for NebulaStereoDelay {
     const EMAIL: &'static str = "";
     const VERSION: &'static str = "1.0.0";
 
-    const DEFAULT_INPUT_CHANNELS: u32 = 2;
-    const DEFAULT_OUTPUT_CHANNELS: u32 = 2;
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: Some(new_nonzero_u32(2)),
+        main_output_channels: Some(new_nonzero_u32(2)),
+        ..AudioIOLayout::const_default()
+    }];
+    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
     type SysExMessage = ();
@@ -158,9 +160,9 @@ impl Plugin for NebulaStereoDelay {
 
     fn initialize(
         &mut self,
-        _bus_config: &BusConfig,
+        _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut InitContext<Self>,
+        _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.engine = DelayEngine::new(self.sample_rate);
@@ -172,39 +174,23 @@ impl Plugin for NebulaStereoDelay {
     fn process(
         &mut self,
         buffer: &mut Buffer,
-        _aux: &mut AuxBuffers,
-        context: &mut ProcessContext<Self>,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let transport = context.transport();
-        let tempo_bpm = if transport.tempo > 0.0 {
-            transport.tempo as f64
-        } else {
-            DEFAULT_TEMPO_BPM
-        };
+        let tempo_bpm = transport.tempo.unwrap_or(DEFAULT_TEMPO_BPM);
 
         let soft_bypass = self.params.bypass.load(Ordering::Relaxed);
         self.engine.set_bypass(soft_bypass);
 
         while let Some(event) = context.next_event() {
-            match event {
-                NoteEvent::MidiEvent {
-                    timing: _,
-                    midi_data,
-                } => {
-                    let status = midi_data[0];
-                    if (0xB0..=0xBF).contains(&status) {
-                        let channel = status & 0x0F;
-                        let cc = midi_data[1] & 0x7F;
-                        let value = midi_data[2] & 0x7F;
-                        let normalized = value as f32 / 127.0;
-                        self.midi_cc.set(channel, cc, normalized);
-                    }
-                }
-                _ => {}
+            if let NoteEvent::MidiCC {
+                channel, cc, value, ..
+            } = event
+            {
+                self.midi_cc.set(channel, cc, value);
             }
         }
-
-        self.apply_midi_cc();
 
         let input_mode_l = self.params.input_mode_l.value().into();
         let input_mode_r = self.params.input_mode_r.value().into();
@@ -222,6 +208,14 @@ impl Plugin for NebulaStereoDelay {
         let stereo_link = self.params.stereo_link.value();
 
         for mut sample in buffer.iter_samples() {
+            let mut channels = sample.iter_mut();
+            let Some(left) = channels.next() else {
+                continue;
+            };
+            let Some(right) = channels.next() else {
+                continue;
+            };
+
             let delay_params = dsp::DelayParams {
                 input_mode_l,
                 input_mode_r,
@@ -255,8 +249,8 @@ impl Plugin for NebulaStereoDelay {
                 stereo_link,
             };
 
-            let in_l = sample[0] as f64;
-            let in_r = sample[1] as f64;
+            let in_l = *left as f64;
+            let in_r = *right as f64;
 
             let (out_l, out_r) = self.engine.process(in_l, in_r, &delay_params);
 
@@ -266,8 +260,8 @@ impl Plugin for NebulaStereoDelay {
             let out_l_f32 = flush_denormal_f32(out_l as f32);
             let out_r_f32 = flush_denormal_f32(out_r as f32);
 
-            sample[0] = out_l_f32;
-            sample[1] = out_r_f32;
+            *left = out_l_f32;
+            *right = out_r_f32;
 
             self.state_manager
                 .update_meters(out_l_f32, out_r_f32, 0.0, 0.0);
@@ -278,50 +272,26 @@ impl Plugin for NebulaStereoDelay {
 }
 
 #[cfg(feature = "plugin")]
-impl NebulaStereoDelay {
-    fn apply_midi_cc(&self) {
-        if let Ok(midi_learn) = self.params.midi_learn.try_read() {
-            for mapping in &midi_learn.mappings {
-                if let Some(normalized) = self.midi_cc.get_and_clear(mapping.channel, mapping.cc) {
-                    self.set_param_normalized(&mapping.param_id, normalized);
-                }
-            }
-        }
-    }
+impl ClapPlugin for NebulaStereoDelay {
+    const CLAP_ID: &'static str = "audio.nebula.stereo-delay";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Professional stereo delay audio effect");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::AudioEffect,
+        ClapFeature::Delay,
+        ClapFeature::Stereo,
+    ];
+}
 
-    fn set_param_normalized(&self, id: &str, normalized: f32) {
-        match id {
-            "iml" => self.params.input_mode_l.set_normalized_value(normalized),
-            "imr" => self.params.input_mode_r.set_normalized_value(normalized),
-            "dtl" => self.params.delay_time_l.set_normalized_value(normalized),
-            "dtr" => self.params.delay_time_r.set_normalized_value(normalized),
-            "ntl" => self.params.note_l.set_normalized_value(normalized),
-            "ntr" => self.params.note_r.set_normalized_value(normalized),
-            "dvl" => self.params.deviation_l.set_normalized_value(normalized),
-            "dvr" => self.params.deviation_r.set_normalized_value(normalized),
-            "hvl" => self.params.halve_l.set_normalized_value(normalized),
-            "hvr" => self.params.halve_r.set_normalized_value(normalized),
-            "dbl" => self.params.double_l.set_normalized_value(normalized),
-            "dbr" => self.params.double_r.set_normalized_value(normalized),
-            "lcl" => self.params.low_cut_l.set_normalized_value(normalized),
-            "lcr" => self.params.low_cut_r.set_normalized_value(normalized),
-            "hcl" => self.params.high_cut_l.set_normalized_value(normalized),
-            "hcr" => self.params.high_cut_r.set_normalized_value(normalized),
-            "fbl" => self.params.feedback_l.set_normalized_value(normalized),
-            "fbr" => self.params.feedback_r.set_normalized_value(normalized),
-            "fpl" => self.params.feedback_phase_l.set_normalized_value(normalized),
-            "fpr" => self.params.feedback_phase_r.set_normalized_value(normalized),
-            "clr" => self.params.crossfeed_lr.set_normalized_value(normalized),
-            "crl" => self.params.crossfeed_rl.set_normalized_value(normalized),
-            "cfp" => self.params.crossfeed_phase.set_normalized_value(normalized),
-            "rout" => self.params.routing.set_normalized_value(normalized),
-            "tsyn" => self.params.tempo_sync.set_normalized_value(normalized),
-            "slnk" => self.params.stereo_link.set_normalized_value(normalized),
-            "oml" => self.params.output_mix_l.set_normalized_value(normalized),
-            "omr" => self.params.output_mix_r.set_normalized_value(normalized),
-            _ => {}
-        }
-    }
+#[cfg(feature = "plugin")]
+impl Vst3Plugin for NebulaStereoDelay {
+    const VST3_CLASS_ID: [u8; 16] = *b"NebulaStereoDly!";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Fx,
+        Vst3SubCategory::Delay,
+        Vst3SubCategory::Stereo,
+    ];
 }
 
 #[cfg(feature = "plugin")]

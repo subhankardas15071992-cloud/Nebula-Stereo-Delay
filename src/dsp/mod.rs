@@ -56,7 +56,7 @@ const BUFFER_MARGIN: usize = 8;
 const ROTATE_LFO_HZ: f64 = 0.5;
 
 /// Butterworth Q for 12 dB/oct biquad filters (= 1/√2).
-const BUTTERWORTH_Q: f64 = 0.707_106_781_186_547_6;
+const BUTTERWORTH_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Public Enums
@@ -64,10 +64,11 @@ const BUTTERWORTH_Q: f64 = 0.707_106_781_186_547_6;
 
 /// Routing modes that determine how the L and R delay channels interact
 /// in the feedback network and (for some modes) at the output stage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RoutingMode {
     /// Independent L/R channels with full crossfeed control via the
     /// `crossfeed_lr` / `crossfeed_rl` parameters.
+    #[default]
     Customized,
     /// Straight: L→L, R→R with no crossfeed whatsoever.
     Straight,
@@ -88,12 +89,6 @@ pub enum RoutingMode {
     /// blend of self- vs. cross-feedback and applies equal-power panning
     /// to the wet outputs.
     Rotate,
-}
-
-impl Default for RoutingMode {
-    fn default() -> Self {
-        Self::Customized
-    }
 }
 
 /// Per-channel input source selection.
@@ -643,9 +638,7 @@ impl BiquadFilter {
     /// ```
     #[inline]
     fn process(&mut self, input: f64) -> f64 {
-        let output = self.b0 * input
-            + self.b1 * self.x1
-            + self.b2 * self.x2
+        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
             - self.a1 * self.y1
             - self.a2 * self.y2;
         self.x2 = self.x1;
@@ -738,6 +731,19 @@ pub struct DelayEngine {
     config: DelayEngineConfig,
 }
 
+struct FeedbackInputs {
+    routing: RoutingMode,
+    fb_l: f64,
+    fb_r: f64,
+    cf_lr: f64,
+    cf_rl: f64,
+    sign_l: f64,
+    sign_r: f64,
+    sign_cf: f64,
+    filt_l: f64,
+    filt_r: f64,
+}
+
 impl DelayEngine {
     // ──────────────────────────────────────────────────────────────────
     // Public API
@@ -822,8 +828,10 @@ impl DelayEngine {
         self.smooth_high_cut_r.reset(self.smooth_high_cut_r.target);
         self.smooth_feedback_l.reset(self.smooth_feedback_l.target);
         self.smooth_feedback_r.reset(self.smooth_feedback_r.target);
-        self.smooth_crossfeed_lr.reset(self.smooth_crossfeed_lr.target);
-        self.smooth_crossfeed_rl.reset(self.smooth_crossfeed_rl.target);
+        self.smooth_crossfeed_lr
+            .reset(self.smooth_crossfeed_lr.target);
+        self.smooth_crossfeed_rl
+            .reset(self.smooth_crossfeed_rl.target);
         self.smooth_mix_l.reset(self.smooth_mix_l.target);
         self.smooth_mix_r.reset(self.smooth_mix_r.target);
         self.bypass_gain.reset(self.bypass_gain.target);
@@ -850,12 +858,7 @@ impl DelayEngine {
     ///
     /// `(left_output, right_output)` in `f64`.  Convert to `f32` at the
     /// very end of the plugin's output stage.
-    pub fn process(
-        &mut self,
-        input_l: f64,
-        input_r: f64,
-        params: &DelayParams,
-    ) -> (f64, f64) {
+    pub fn process(&mut self, input_l: f64, input_r: f64, params: &DelayParams) -> (f64, f64) {
         // ── 1. Stereo link: mirror L params to R when linked ──────────
         let p = if params.stereo_link {
             DelayParams {
@@ -904,20 +907,29 @@ impl DelayEngine {
         // ── 4. Push new targets into smoothers ────────────────────────
         self.smooth_delay_l.set_target(eff_delay_l);
         self.smooth_delay_r.set_target(eff_delay_r);
-        self.smooth_low_cut_l.set_target(p.low_cut_l.max(20.0).min(20000.0));
-        self.smooth_low_cut_r.set_target(p.low_cut_r.max(20.0).min(20000.0));
-        self.smooth_high_cut_l.set_target(p.high_cut_l.max(20.0).min(20000.0));
-        self.smooth_high_cut_r.set_target(p.high_cut_r.max(20.0).min(20000.0));
-        self.smooth_feedback_l.set_target(p.feedback_l.clamp(0.0, 1.0));
-        self.smooth_feedback_r.set_target(p.feedback_r.clamp(0.0, 1.0));
-        self.smooth_crossfeed_lr.set_target(p.crossfeed_lr.clamp(0.0, 1.0));
-        self.smooth_crossfeed_rl.set_target(p.crossfeed_rl.clamp(0.0, 1.0));
+        self.smooth_low_cut_l
+            .set_target(p.low_cut_l.clamp(20.0, 20000.0));
+        self.smooth_low_cut_r
+            .set_target(p.low_cut_r.clamp(20.0, 20000.0));
+        self.smooth_high_cut_l
+            .set_target(p.high_cut_l.clamp(20.0, 20000.0));
+        self.smooth_high_cut_r
+            .set_target(p.high_cut_r.clamp(20.0, 20000.0));
+        self.smooth_feedback_l
+            .set_target(p.feedback_l.clamp(0.0, 1.0));
+        self.smooth_feedback_r
+            .set_target(p.feedback_r.clamp(0.0, 1.0));
+        self.smooth_crossfeed_lr
+            .set_target(p.crossfeed_lr.clamp(0.0, 1.0));
+        self.smooth_crossfeed_rl
+            .set_target(p.crossfeed_rl.clamp(0.0, 1.0));
         self.smooth_mix_l.set_target(p.output_mix_l.clamp(0.0, 1.0));
         self.smooth_mix_r.set_target(p.output_mix_r.clamp(0.0, 1.0));
 
         // Bypass: either the param flag or the latch can engage bypass.
         let bypass_active = p.bypass || self.bypass_latch;
-        self.bypass_gain.set_target(if bypass_active { 0.0 } else { 1.0 });
+        self.bypass_gain
+            .set_target(if bypass_active { 0.0 } else { 1.0 });
 
         // ── 5. Advance smoothers and capture values ───────────────────
         let s_delay_l = self.smooth_delay_l.next();
@@ -935,10 +947,14 @@ impl DelayEngine {
         let s_bypass = self.bypass_gain.next();
 
         // ── 6. Update biquad coefficients from smoothed cutoffs ───────
-        self.low_cut_l.update_coefficients(BiquadKind::HighPass, s_lc_l, self.sample_rate);
-        self.low_cut_r.update_coefficients(BiquadKind::HighPass, s_lc_r, self.sample_rate);
-        self.high_cut_l.update_coefficients(BiquadKind::LowPass, s_hc_l, self.sample_rate);
-        self.high_cut_r.update_coefficients(BiquadKind::LowPass, s_hc_r, self.sample_rate);
+        self.low_cut_l
+            .update_coefficients(BiquadKind::HighPass, s_lc_l, self.sample_rate);
+        self.low_cut_r
+            .update_coefficients(BiquadKind::HighPass, s_lc_r, self.sample_rate);
+        self.high_cut_l
+            .update_coefficients(BiquadKind::LowPass, s_hc_l, self.sample_rate);
+        self.high_cut_r
+            .update_coefficients(BiquadKind::LowPass, s_hc_r, self.sample_rate);
 
         // ── 7. Read from delay lines (cubic interpolation) ────────────
         let raw_l = self.delay_l.read(s_delay_l);
@@ -954,18 +970,18 @@ impl DelayEngine {
         let sign_cf: f64 = if p.crossfeed_phase { -1.0 } else { 1.0 };
 
         // ── 10. Routing: compute feedback signals for each delay line ──
-        let (fb_to_l, fb_to_r) = Self::compute_feedback(
-            p.routing,
-            s_fb_l,
-            s_fb_r,
-            s_cf_lr,
-            s_cf_rl,
+        let (fb_to_l, fb_to_r) = Self::compute_feedback(FeedbackInputs {
+            routing: p.routing,
+            fb_l: s_fb_l,
+            fb_r: s_fb_r,
+            cf_lr: s_cf_lr,
+            cf_rl: s_cf_rl,
             sign_l,
             sign_r,
             sign_cf,
             filt_l,
             filt_r,
-        );
+        });
 
         // ── 11. Write input + feedback into delay lines ───────────────
         self.delay_l.write_and_advance(in_l + fb_to_l);
@@ -1064,18 +1080,20 @@ impl DelayEngine {
     /// | Pan         | fb_l   | cf_lr     | cf_rl     | fb_r   |
     /// | Rotate      | LFO-modulated mix of self + cross |
     #[inline]
-    fn compute_feedback(
-        routing: RoutingMode,
-        fb_l: f64,
-        fb_r: f64,
-        cf_lr: f64,
-        cf_rl: f64,
-        sign_l: f64,
-        sign_r: f64,
-        sign_cf: f64,
-        filt_l: f64,
-        filt_r: f64,
-    ) -> (f64, f64) {
+    fn compute_feedback(inputs: FeedbackInputs) -> (f64, f64) {
+        let FeedbackInputs {
+            routing,
+            fb_l,
+            fb_r,
+            cf_lr,
+            cf_rl,
+            sign_l,
+            sign_r,
+            sign_cf,
+            filt_l,
+            filt_r,
+        } = inputs;
+
         // Pre-compute the basic signal contributions.
         let self_l = filt_l * fb_l * sign_l;
         let self_r = filt_r * fb_r * sign_r;
@@ -1258,10 +1276,7 @@ mod tests {
         // At this point write_pos = 5.  A 3-sample delay should read
         // from position 2, which holds 30.0.
         let val = dl.read(3.0 / 44100.0);
-        assert!(
-            (val - 30.0).abs() < 1e-6,
-            "expected ~30.0, got {val}"
-        );
+        assert!((val - 30.0).abs() < 1e-6, "expected ~30.0, got {val}");
     }
 
     // ── BiquadFilter ──────────────────────────────────────────────────
@@ -1290,10 +1305,7 @@ mod tests {
         for _ in 0..100_000 {
             out = bq.process(1.0);
         }
-        assert!(
-            out.abs() < 0.01,
-            "high-pass should reject DC, got {out}"
-        );
+        assert!(out.abs() < 0.01, "high-pass should reject DC, got {out}");
     }
 
     // ── DelayEngine integration ───────────────────────────────────────
@@ -1312,8 +1324,10 @@ mod tests {
     #[test]
     fn engine_bypass_outputs_dry() {
         let mut engine = DelayEngine::new(44100.0);
-        let mut params = DelayParams::default();
-        params.bypass = true;
+        let params = DelayParams {
+            bypass: true,
+            ..DelayParams::default()
+        };
 
         // Run enough samples for the bypass crossfade to complete.
         for _ in 0..2000 {
@@ -1423,11 +1437,11 @@ mod tests {
         let params = DelayParams {
             tempo_sync: true,
             tempo_bpm: 120.0,
-            note_l: NoteValue::Quarter,  // 0.5 s
+            note_l: NoteValue::Quarter, // 0.5 s
             note_r: NoteValue::Quarter,
-            feedback_l: 0.0,  // No feedback for cleaner measurement.
+            feedback_l: 0.0, // No feedback for cleaner measurement.
             feedback_r: 0.0,
-            output_mix_l: 1.0,  // Fully wet.
+            output_mix_l: 1.0, // Fully wet.
             output_mix_r: 1.0,
             ..DelayParams::default()
         };
@@ -1463,19 +1477,37 @@ mod tests {
     fn effective_delay_time_halve_and_double() {
         // 0.5 s, halved → 0.25 s.
         let t = DelayEngine::effective_delay_time(
-            0.5, false, 120.0, NoteValue::Quarter, 0.0, true, false,
+            0.5,
+            false,
+            120.0,
+            NoteValue::Quarter,
+            0.0,
+            true,
+            false,
         );
         assert!((t - 0.25).abs() < 1e-12, "expected 0.25, got {t}");
 
         // 0.5 s, doubled → 1.0 s.
         let t = DelayEngine::effective_delay_time(
-            0.5, false, 120.0, NoteValue::Quarter, 0.0, false, true,
+            0.5,
+            false,
+            120.0,
+            NoteValue::Quarter,
+            0.0,
+            false,
+            true,
         );
         assert!((t - 1.0).abs() < 1e-12, "expected 1.0, got {t}");
 
         // Both halve and double → net 1×.
         let t = DelayEngine::effective_delay_time(
-            0.5, false, 120.0, NoteValue::Quarter, 0.0, true, true,
+            0.5,
+            false,
+            120.0,
+            NoteValue::Quarter,
+            0.0,
+            true,
+            true,
         );
         assert!((t - 0.5).abs() < 1e-12, "expected 0.5, got {t}");
     }
@@ -1484,7 +1516,13 @@ mod tests {
     fn effective_delay_time_deviation() {
         // +100 cents = 2^(100/1200) ≈ 1.05946 multiplier.
         let t = DelayEngine::effective_delay_time(
-            1.0, false, 120.0, NoteValue::Quarter, 100.0, false, false,
+            1.0,
+            false,
+            120.0,
+            NoteValue::Quarter,
+            100.0,
+            false,
+            false,
         );
         let expected = 2.0_f64.powf(100.0 / 1200.0);
         assert!((t - expected).abs() < 1e-12, "expected {expected}, got {t}");

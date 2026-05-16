@@ -24,10 +24,10 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
 
-use nih_plug::params::enums::Enum;
-use nih_plug::params::{
-    BoolParam, EnumParam, FloatParam, FloatRange, Params, SmoothingStyle,
-};
+use nih_plug::params::enums::{Enum, EnumParam};
+use nih_plug::params::range::FloatRange;
+use nih_plug::params::smoothing::SmoothingStyle;
+use nih_plug::params::{BoolParam, FloatParam, Params};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp;
@@ -290,19 +290,10 @@ impl ParamSnapshot {
 /// When a new snapshot is pushed and the stack is full, the oldest entry
 /// is discarded. Performing a push after an undo clears the redo stack
 /// (standard undo/redo semantics).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UndoRedoStack {
     pub undo: Vec<ParamSnapshot>,
     pub redo: Vec<ParamSnapshot>,
-}
-
-impl Default for UndoRedoStack {
-    fn default() -> Self {
-        Self {
-            undo: Vec::new(),
-            redo: Vec::new(),
-        }
-    }
 }
 
 impl UndoRedoStack {
@@ -360,11 +351,7 @@ fn format_delay_time(val: f32) -> String {
 
 /// Parse a delay time string (e.g., "0.500" or "0.500 s").
 fn parse_delay_time(s: &str) -> Option<f32> {
-    s.trim()
-        .trim_end_matches('s')
-        .trim()
-        .parse::<f32>()
-        .ok()
+    s.trim().trim_end_matches('s').trim().parse::<f32>().ok()
 }
 
 /// Format a deviation value in cents with 1 decimal place.
@@ -374,11 +361,7 @@ fn format_deviation(val: f32) -> String {
 
 /// Parse a deviation string (e.g., "0.0" or "0.0 ct").
 fn parse_deviation(s: &str) -> Option<f32> {
-    s.trim()
-        .trim_end_matches("ct")
-        .trim()
-        .parse::<f32>()
-        .ok()
+    s.trim().trim_end_matches("ct").trim().parse::<f32>().ok()
 }
 
 /// Format a frequency, switching between Hz and kHz for readability.
@@ -609,7 +592,6 @@ pub struct NebulaStereoDelayParams {
     // ══════════════════════════════════════════════════════════════════════
     // Internal State (persisted but not automatable)
     // ══════════════════════════════════════════════════════════════════════
-
     /// FX bypass flag. When `true`, the DSP engine crossfades to a
     /// passthrough signal over 512 samples (soft bypass). This is a
     /// software-internal flag; nih_plug provides its own host-visible
@@ -645,7 +627,7 @@ impl Default for NebulaStereoDelayParams {
         // A factor of `skew_factor(-2.0)` gives approximately
         // logarithmic distribution, placing more resolution at low
         // frequencies where the human ear is most sensitive.
-        const FREQ_SKEW: f32 = FloatRange::skew_factor(-2.0);
+        let freq_skew = FloatRange::skew_factor(-2.0);
 
         Self {
             // ══════════════════════════════════════════════════════════
@@ -660,23 +642,29 @@ impl Default for NebulaStereoDelayParams {
             delay_time_l: FloatParam::new(
                 "Delay Time L",
                 0.5,
-                FloatRange::Linear { min: 0.01, max: 10.0 },
+                FloatRange::Linear {
+                    min: 0.01,
+                    max: 10.0,
+                },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.001)
-            .with_value_to_string(Arc::new(|val| format_delay_time(val)))
-            .with_string_to_value(Arc::new(|s| parse_delay_time(s)))
+            .with_value_to_string(Arc::new(format_delay_time))
+            .with_string_to_value(Arc::new(parse_delay_time))
             .with_unit(" s"),
 
             delay_time_r: FloatParam::new(
                 "Delay Time R",
                 0.5,
-                FloatRange::Linear { min: 0.01, max: 10.0 },
+                FloatRange::Linear {
+                    min: 0.01,
+                    max: 10.0,
+                },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.001)
-            .with_value_to_string(Arc::new(|val| format_delay_time(val)))
-            .with_string_to_value(Arc::new(|s| parse_delay_time(s)))
+            .with_value_to_string(Arc::new(format_delay_time))
+            .with_string_to_value(Arc::new(parse_delay_time))
             .with_unit(" s"),
 
             // ══════════════════════════════════════════════════════════
@@ -698,8 +686,8 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.1)
-            .with_value_to_string(Arc::new(|val| format_deviation(val)))
-            .with_string_to_value(Arc::new(|s| parse_deviation(s)))
+            .with_value_to_string(Arc::new(format_deviation))
+            .with_string_to_value(Arc::new(parse_deviation))
             .with_unit(" ct"),
 
             deviation_r: FloatParam::new(
@@ -712,8 +700,8 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.1)
-            .with_value_to_string(Arc::new(|val| format_deviation(val)))
-            .with_string_to_value(Arc::new(|s| parse_deviation(s)))
+            .with_value_to_string(Arc::new(format_deviation))
+            .with_string_to_value(Arc::new(parse_deviation))
             .with_unit(" ct"),
 
             // ══════════════════════════════════════════════════════════
@@ -721,7 +709,11 @@ impl Default for NebulaStereoDelayParams {
             // ══════════════════════════════════════════════════════════
             halve_l: BoolParam::new("Halve L", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { ":2".to_string() } else { "Off".to_string() }
+                    if v {
+                        ":2".to_string()
+                    } else {
+                        "Off".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -730,7 +722,11 @@ impl Default for NebulaStereoDelayParams {
 
             halve_r: BoolParam::new("Halve R", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { ":2".to_string() } else { "Off".to_string() }
+                    if v {
+                        ":2".to_string()
+                    } else {
+                        "Off".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -739,7 +735,11 @@ impl Default for NebulaStereoDelayParams {
 
             double_l: BoolParam::new("Double L", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "x2".to_string() } else { "Off".to_string() }
+                    if v {
+                        "x2".to_string()
+                    } else {
+                        "Off".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -748,7 +748,11 @@ impl Default for NebulaStereoDelayParams {
 
             double_r: BoolParam::new("Double R", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "x2".to_string() } else { "Off".to_string() }
+                    if v {
+                        "x2".to_string()
+                    } else {
+                        "Off".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -764,12 +768,12 @@ impl Default for NebulaStereoDelayParams {
                 FloatRange::Skewed {
                     min: 20.0,
                     max: 20000.0,
-                    factor: FREQ_SKEW,
+                    factor: freq_skew,
                 },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
-            .with_value_to_string(Arc::new(|val| format_frequency(val)))
-            .with_string_to_value(Arc::new(|s| parse_frequency(s)))
+            .with_value_to_string(Arc::new(format_frequency))
+            .with_string_to_value(Arc::new(parse_frequency))
             .with_unit(" Hz"),
 
             low_cut_r: FloatParam::new(
@@ -778,12 +782,12 @@ impl Default for NebulaStereoDelayParams {
                 FloatRange::Skewed {
                     min: 20.0,
                     max: 20000.0,
-                    factor: FREQ_SKEW,
+                    factor: freq_skew,
                 },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
-            .with_value_to_string(Arc::new(|val| format_frequency(val)))
-            .with_string_to_value(Arc::new(|s| parse_frequency(s)))
+            .with_value_to_string(Arc::new(format_frequency))
+            .with_string_to_value(Arc::new(parse_frequency))
             .with_unit(" Hz"),
 
             high_cut_l: FloatParam::new(
@@ -792,12 +796,12 @@ impl Default for NebulaStereoDelayParams {
                 FloatRange::Skewed {
                     min: 20.0,
                     max: 20000.0,
-                    factor: FREQ_SKEW,
+                    factor: freq_skew,
                 },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
-            .with_value_to_string(Arc::new(|val| format_frequency(val)))
-            .with_string_to_value(Arc::new(|s| parse_frequency(s)))
+            .with_value_to_string(Arc::new(format_frequency))
+            .with_string_to_value(Arc::new(parse_frequency))
             .with_unit(" Hz"),
 
             high_cut_r: FloatParam::new(
@@ -806,12 +810,12 @@ impl Default for NebulaStereoDelayParams {
                 FloatRange::Skewed {
                     min: 20.0,
                     max: 20000.0,
-                    factor: FREQ_SKEW,
+                    factor: freq_skew,
                 },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
-            .with_value_to_string(Arc::new(|val| format_frequency(val)))
-            .with_string_to_value(Arc::new(|s| parse_frequency(s)))
+            .with_value_to_string(Arc::new(format_frequency))
+            .with_string_to_value(Arc::new(parse_frequency))
             .with_unit(" Hz"),
 
             // ══════════════════════════════════════════════════════════
@@ -824,8 +828,8 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.01)
-            .with_value_to_string(Arc::new(|val| format_percentage(val)))
-            .with_string_to_value(Arc::new(|s| parse_percentage(s)))
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
             feedback_r: FloatParam::new(
@@ -835,13 +839,17 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.01)
-            .with_value_to_string(Arc::new(|val| format_percentage(val)))
-            .with_string_to_value(Arc::new(|s| parse_percentage(s)))
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
             feedback_phase_l: BoolParam::new("Feedback Phase L", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "Inverted".to_string() } else { "Normal".to_string() }
+                    if v {
+                        "Inverted".to_string()
+                    } else {
+                        "Normal".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -850,7 +858,11 @@ impl Default for NebulaStereoDelayParams {
 
             feedback_phase_r: BoolParam::new("Feedback Phase R", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "Inverted".to_string() } else { "Normal".to_string() }
+                    if v {
+                        "Inverted".to_string()
+                    } else {
+                        "Normal".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -867,8 +879,8 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.01)
-            .with_value_to_string(Arc::new(|val| format_percentage(val)))
-            .with_string_to_value(Arc::new(|s| parse_percentage(s)))
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
             crossfeed_rl: FloatParam::new(
@@ -878,13 +890,17 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.01)
-            .with_value_to_string(Arc::new(|val| format_percentage(val)))
-            .with_string_to_value(Arc::new(|s| parse_percentage(s)))
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
             crossfeed_phase: BoolParam::new("Crossfeed Phase", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "Inverted".to_string() } else { "Normal".to_string() }
+                    if v {
+                        "Inverted".to_string()
+                    } else {
+                        "Normal".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -901,7 +917,11 @@ impl Default for NebulaStereoDelayParams {
             // ══════════════════════════════════════════════════════════
             tempo_sync: BoolParam::new("Tempo Sync", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "Sync".to_string() } else { "Free".to_string() }
+                    if v {
+                        "Sync".to_string()
+                    } else {
+                        "Free".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -913,7 +933,11 @@ impl Default for NebulaStereoDelayParams {
             // ══════════════════════════════════════════════════════════
             stereo_link: BoolParam::new("Stereo Link", false)
                 .with_value_to_string(Arc::new(|v| {
-                    if v { "Linked".to_string() } else { "Unlinked".to_string() }
+                    if v {
+                        "Linked".to_string()
+                    } else {
+                        "Unlinked".to_string()
+                    }
                 }))
                 .with_string_to_value(Arc::new(|s| {
                     let s = s.trim().to_lowercase();
@@ -930,8 +954,8 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.01)
-            .with_value_to_string(Arc::new(|val| format_percentage(val)))
-            .with_string_to_value(Arc::new(|s| parse_percentage(s)))
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
             output_mix_r: FloatParam::new(
@@ -941,8 +965,8 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_step_size(0.01)
-            .with_value_to_string(Arc::new(|val| format_percentage(val)))
-            .with_string_to_value(Arc::new(|s| parse_percentage(s)))
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
             // ══════════════════════════════════════════════════════════
@@ -1016,7 +1040,11 @@ impl NebulaStereoDelayParams {
     ///
     /// This method must only be called from the **main/GUI thread**, as
     /// required by nih_plug's `ParamSetter`.
-    pub fn apply_snapshot(&self, setter: &nih_plug::context::gui::ParamSetter, snapshot: &ParamSnapshot) {
+    pub fn apply_snapshot(
+        &self,
+        setter: &nih_plug::context::gui::ParamSetter,
+        snapshot: &ParamSnapshot,
+    ) {
         // Float params
         setter.set_parameter(&self.delay_time_l, snapshot.delay_time_l);
         setter.set_parameter(&self.delay_time_r, snapshot.delay_time_r);
@@ -1053,14 +1081,8 @@ impl NebulaStereoDelayParams {
             &self.input_mode_r,
             InputModeParam::from_index(snapshot.input_mode_r),
         );
-        setter.set_parameter(
-            &self.note_l,
-            NoteValueParam::from_index(snapshot.note_l),
-        );
-        setter.set_parameter(
-            &self.note_r,
-            NoteValueParam::from_index(snapshot.note_r),
-        );
+        setter.set_parameter(&self.note_l, NoteValueParam::from_index(snapshot.note_l));
+        setter.set_parameter(&self.note_r, NoteValueParam::from_index(snapshot.note_r));
         setter.set_parameter(
             &self.routing,
             RoutingModeParam::from_index(snapshot.routing),
@@ -1075,7 +1097,10 @@ impl NebulaStereoDelayParams {
     pub fn ab_save_current(&self) {
         let slot = self.ab_state.load(Ordering::Relaxed);
         let snapshot = self.capture_snapshot();
-        let mut snapshots = self.ab_snapshots.write().expect("Poisoned RwLock on ab_save");
+        let mut snapshots = self
+            .ab_snapshots
+            .write()
+            .expect("Poisoned RwLock on ab_save");
         match slot {
             0 => snapshots.a = snapshot,
             _ => snapshots.b = snapshot,
@@ -1099,10 +1124,10 @@ impl NebulaStereoDelayParams {
 
         // Save current state into the slot we're leaving
         {
-            let mut snapshots =
-                self.ab_snapshots
-                    .write()
-                    .expect("Poisoned RwLock on ab_toggle save");
+            let mut snapshots = self
+                .ab_snapshots
+                .write()
+                .expect("Poisoned RwLock on ab_toggle save");
             match current_slot {
                 0 => snapshots.a = current_snapshot,
                 _ => snapshots.b = current_snapshot,
@@ -1146,10 +1171,7 @@ impl NebulaStereoDelayParams {
     /// apply the returned snapshot through a `ParamSetter`.
     pub fn undo(&self) -> Option<ParamSnapshot> {
         let current = self.capture_snapshot();
-        let mut stack = self
-            .undo_stack
-            .write()
-            .expect("Poisoned RwLock on undo");
+        let mut stack = self.undo_stack.write().expect("Poisoned RwLock on undo");
         stack.undo(current)
     }
 
@@ -1160,10 +1182,7 @@ impl NebulaStereoDelayParams {
     /// apply the returned snapshot through a `ParamSetter`.
     pub fn redo(&self) -> Option<ParamSnapshot> {
         let current = self.capture_snapshot();
-        let mut stack = self
-            .undo_stack
-            .write()
-            .expect("Poisoned RwLock on redo");
+        let mut stack = self.undo_stack.write().expect("Poisoned RwLock on redo");
         stack.redo(current)
     }
 
@@ -1271,7 +1290,10 @@ mod tests {
 
     #[test]
     fn input_mode_to_dsp() {
-        assert_eq!(dsp::InputMode::from(InputModeParam::Off), dsp::InputMode::Off);
+        assert_eq!(
+            dsp::InputMode::from(InputModeParam::Off),
+            dsp::InputMode::Off
+        );
         assert_eq!(
             dsp::InputMode::from(InputModeParam::Left),
             dsp::InputMode::Left
@@ -1292,8 +1314,14 @@ mod tests {
 
     #[test]
     fn note_value_to_dsp() {
-        assert_eq!(dsp::NoteValue::from(NoteValueParam::Quarter), dsp::NoteValue::Quarter);
-        assert_eq!(dsp::NoteValue::from(NoteValueParam::EighthTriplet), dsp::NoteValue::EighthTriplet);
+        assert_eq!(
+            dsp::NoteValue::from(NoteValueParam::Quarter),
+            dsp::NoteValue::Quarter
+        );
+        assert_eq!(
+            dsp::NoteValue::from(NoteValueParam::EighthTriplet),
+            dsp::NoteValue::EighthTriplet
+        );
     }
 
     #[test]
@@ -1411,8 +1439,8 @@ mod tests {
         assert_eq!(snap.delay_time_l, 0.5);
         assert_eq!(snap.feedback_l, 0.4);
         assert_eq!(snap.output_mix_l, 1.0);
-        assert_eq!(snap.tempo_sync, false);
-        assert_eq!(snap.stereo_link, false);
+        assert!(!snap.tempo_sync);
+        assert!(!snap.stereo_link);
     }
 
     // ── A/B snapshots default ──────────────────────────────────────
@@ -1429,35 +1457,65 @@ mod tests {
     #[test]
     fn bool_display_halve() {
         // Verify the formatter produces expected strings
-        let format_halve = |v: bool| if v { ":2".to_string() } else { "Off".to_string() };
+        let format_halve = |v: bool| {
+            if v {
+                ":2".to_string()
+            } else {
+                "Off".to_string()
+            }
+        };
         assert_eq!(format_halve(false), "Off");
         assert_eq!(format_halve(true), ":2");
     }
 
     #[test]
     fn bool_display_double() {
-        let format_double = |v: bool| if v { "x2".to_string() } else { "Off".to_string() };
+        let format_double = |v: bool| {
+            if v {
+                "x2".to_string()
+            } else {
+                "Off".to_string()
+            }
+        };
         assert_eq!(format_double(false), "Off");
         assert_eq!(format_double(true), "x2");
     }
 
     #[test]
     fn bool_display_phase() {
-        let format_phase = |v: bool| if v { "Inverted".to_string() } else { "Normal".to_string() };
+        let format_phase = |v: bool| {
+            if v {
+                "Inverted".to_string()
+            } else {
+                "Normal".to_string()
+            }
+        };
         assert_eq!(format_phase(false), "Normal");
         assert_eq!(format_phase(true), "Inverted");
     }
 
     #[test]
     fn bool_display_sync() {
-        let format_sync = |v: bool| if v { "Sync".to_string() } else { "Free".to_string() };
+        let format_sync = |v: bool| {
+            if v {
+                "Sync".to_string()
+            } else {
+                "Free".to_string()
+            }
+        };
         assert_eq!(format_sync(false), "Free");
         assert_eq!(format_sync(true), "Sync");
     }
 
     #[test]
     fn bool_display_link() {
-        let format_link = |v: bool| if v { "Linked".to_string() } else { "Unlinked".to_string() };
+        let format_link = |v: bool| {
+            if v {
+                "Linked".to_string()
+            } else {
+                "Unlinked".to_string()
+            }
+        };
         assert_eq!(format_link(false), "Unlinked");
         assert_eq!(format_link(true), "Linked");
     }

@@ -205,15 +205,17 @@ fn basic_null_test() {
     let num_samples = (SR * 2.0) as usize; // 2 seconds
     let input = generate_sine(1000.0, SR, num_samples);
 
-    let mut params = DelayParams::default();
-    params.output_mix_l = 0.0; // Fully dry
-    params.output_mix_r = 0.0;
-    // Disable bypass so we test the dry path properly
-    params.bypass = false;
-    // Use straight routing with zero feedback to avoid any wet signal
-    params.feedback_l = 0.0;
-    params.feedback_r = 0.0;
-    params.routing = RoutingMode::Straight;
+    let params = DelayParams {
+        output_mix_l: 0.0, // Fully dry
+        output_mix_r: 0.0,
+        // Disable bypass so we test the dry path properly
+        bypass: false,
+        // Use straight routing with zero feedback to avoid any wet signal
+        feedback_l: 0.0,
+        feedback_r: 0.0,
+        routing: RoutingMode::Straight,
+        ..DelayParams::default()
+    };
 
     let output = process_block(&mut engine, &input, &input, &params);
 
@@ -310,8 +312,8 @@ fn feedback_decay_test() {
     let burst_len = (SR * 0.01) as usize; // 10ms burst
     let total_len = (SR * 3.0) as usize; // 3 seconds
     let mut input = vec![0.0f64; total_len];
-    for i in 0..burst_len {
-        input[i] = (2.0 * std::f64::consts::TAU * 1000.0 * i as f64 / SR).sin() * 0.8;
+    for (i, sample) in input.iter_mut().take(burst_len).enumerate() {
+        *sample = (2.0 * std::f64::consts::TAU * 1000.0 * i as f64 / SR).sin() * 0.8;
     }
 
     let mut params = make_params(delay_secs);
@@ -336,7 +338,10 @@ fn feedback_decay_test() {
         if echo_end >= output.len() {
             break;
         }
-        let segment: Vec<f64> = output[echo_start..echo_end].iter().map(|(l, _r)| *l).collect();
+        let segment: Vec<f64> = output[echo_start..echo_end]
+            .iter()
+            .map(|(l, _r)| *l)
+            .collect();
         let level = rms_db(&segment);
         if level > -100.0 {
             // Only count echoes that have measurable energy
@@ -352,9 +357,7 @@ fn feedback_decay_test() {
         // The first echo_level includes the dry signal (mix=1.0 means no dry though).
         for i in 1..echo_levels.len() {
             let attenuation = echo_levels[i - 1] - echo_levels[i];
-            eprintln!(
-                "  Echo #{i} attenuation from previous: {attenuation:.1} dB"
-            );
+            eprintln!("  Echo #{i} attenuation from previous: {attenuation:.1} dB");
             // Allow wider range since filters affect amplitude too
             assert!(
                 attenuation > 0.0,
@@ -362,7 +365,10 @@ fn feedback_decay_test() {
             );
         }
     } else {
-        eprintln!("  Only {} echoes detected, test passed with reduced expectations", echo_levels.len());
+        eprintln!(
+            "  Only {} echoes detected, test passed with reduced expectations",
+            echo_levels.len()
+        );
     }
 }
 
@@ -453,7 +459,9 @@ fn low_cut_spectral_test() {
         -200.0
     };
 
-    eprintln!("  Low cut (200 Hz): stopband level = {stopband_level:.6}, passband = {passband_level:.6}");
+    eprintln!(
+        "  Low cut (200 Hz): stopband level = {stopband_level:.6}, passband = {passband_level:.6}"
+    );
     eprintln!("  Attenuation below 100 Hz: {attenuation_db:.1} dB");
 
     assert!(
@@ -496,7 +504,9 @@ fn high_cut_spectral_test() {
         -200.0
     };
 
-    eprintln!("  High cut (5 kHz): stopband level = {stopband_level:.6}, passband = {passband_level:.6}");
+    eprintln!(
+        "  High cut (5 kHz): stopband level = {stopband_level:.6}, passband = {passband_level:.6}"
+    );
     eprintln!("  Attenuation above 8 kHz: {attenuation_db:.1} dB");
 
     assert!(
@@ -636,8 +646,8 @@ fn step_response_test() {
     let measure_len = (SR * 1.0) as usize;
     let total_len = prefill + measure_len;
     let mut input = vec![0.0f64; total_len];
-    for i in prefill..total_len {
-        input[i] = 0.5;
+    for sample in input.iter_mut().take(total_len).skip(prefill) {
+        *sample = 0.5;
     }
 
     let params = DelayParams {
@@ -647,7 +657,7 @@ fn step_response_test() {
         output_mix_r: 1.0,
         feedback_l: 0.0,
         feedback_r: 0.0,
-        low_cut_l: 20.0,   // HP at 20Hz — will remove DC component of step
+        low_cut_l: 20.0, // HP at 20Hz — will remove DC component of step
         low_cut_r: 20.0,
         high_cut_l: 20000.0,
         high_cut_r: 20000.0,
@@ -668,7 +678,9 @@ fn step_response_test() {
         let step_sample = output[step_output_idx].0;
         let delta = (step_sample - prev_sample).abs();
 
-        eprintln!("  Step at output: prev={prev_sample:.6}, step={step_sample:.6}, delta={delta:.6}");
+        eprintln!(
+            "  Step at output: prev={prev_sample:.6}, step={step_sample:.6}, delta={delta:.6}"
+        );
         // There should be a significant jump when the step arrives
         assert!(
             delta > 0.1,
@@ -680,9 +692,10 @@ fn step_response_test() {
     // overshoot beyond 1.5x the step value in the first 100 samples after step
     let check_end = (step_output_idx + 100).min(output.len());
     let mut max_abs = 0.0f64;
-    for i in step_output_idx..check_end {
-        max_abs = max_abs.max(output[i].0.abs());
-    }
+    max_abs = output[step_output_idx..check_end]
+        .iter()
+        .map(|(left, _)| left.abs())
+        .fold(max_abs, f64::max);
     eprintln!("  Max absolute output in 100 samples after step: {max_abs:.4}");
 
     // Should not exceed 1.0 (2x the step of 0.5)
@@ -709,9 +722,13 @@ fn square_wave_edge_test() {
     let num_samples = (SR * 1.0) as usize;
     let period_samples = (SR / 100.0).round() as usize; // 100 Hz
     let mut input = vec![0.0f64; num_samples];
-    for i in 0..num_samples {
+    for (i, sample) in input.iter_mut().enumerate() {
         let phase = i % period_samples;
-        input[i] = if phase < period_samples / 2 { 0.5 } else { -0.5 };
+        *sample = if phase < period_samples / 2 {
+            0.5
+        } else {
+            -0.5
+        };
     }
 
     let mut params = make_params(delay_secs);
@@ -741,8 +758,8 @@ fn square_wave_edge_test() {
             let mut t_lo = None;
             let mut t_hi = None;
 
-            for j in i..search_end {
-                let v = output[j].0;
+            for (offset, &(v, _)) in output[i..search_end].iter().enumerate() {
+                let j = i + offset;
                 if t_lo.is_none() && v >= lo {
                     t_lo = Some(j);
                 }

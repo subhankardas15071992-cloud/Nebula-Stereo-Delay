@@ -27,8 +27,8 @@
 //! Users can save, load, and delete their own presets in a platform-
 //! specific application-data directory:
 //!
-//! - **Linux**:   `$XDG_DATA_HOME/NebulaAudio/NebulaStereoDelay/Presets`
-//!                (falls back to `~/.local/share/…`)
+//! - **Linux**: `$XDG_DATA_HOME/NebulaAudio/NebulaStereoDelay/Presets`
+//!   (falls back to `~/.local/share/…`)
 //! - **macOS**:   `~/Library/Application Support/NebulaAudio/NebulaStereoDelay/Presets`
 //! - **Windows**: `%APPDATA%\NebulaAudio\NebulaStereoDelay\Presets`
 //!
@@ -44,7 +44,9 @@ use std::path::{Path, PathBuf};
 use nih_plug::params::enums::Enum;
 use serde::{Deserialize, Serialize};
 
-use crate::parameters::{InputModeParam, NebulaStereoDelayParams, NoteValueParam, RoutingModeParam};
+use crate::parameters::{
+    InputModeParam, NebulaStereoDelayParams, NoteValueParam, RoutingModeParam,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Data Structures
@@ -288,8 +290,7 @@ impl PresetManager {
         let json = serde_json::to_string_pretty(&preset)
             .map_err(|e| format!("Failed to serialise preset: {e}"))?;
 
-        fs::write(&file_path, json)
-            .map_err(|e| format!("Failed to write preset file: {e}"))?;
+        fs::write(&file_path, json).map_err(|e| format!("Failed to write preset file: {e}"))?;
 
         Ok(())
     }
@@ -378,14 +379,10 @@ impl PresetManager {
         let file_path = self.user_preset_dir.join(preset_filename(name));
 
         if !file_path.exists() {
-            return Err(format!(
-                "Preset file not found: {}",
-                file_path.display()
-            ));
+            return Err(format!("Preset file not found: {}", file_path.display()));
         }
 
-        fs::remove_file(&file_path)
-            .map_err(|e| format!("Failed to delete preset file: {e}"))?;
+        fs::remove_file(&file_path).map_err(|e| format!("Failed to delete preset file: {e}"))?;
 
         Ok(())
     }
@@ -404,8 +401,7 @@ impl PresetManager {
         let json = serde_json::to_string_pretty(preset)
             .map_err(|e| format!("Failed to serialise preset: {e}"))?;
 
-        fs::write(path, json)
-            .map_err(|e| format!("Failed to write export file: {e}"))?;
+        fs::write(path, json).map_err(|e| format!("Failed to write export file: {e}"))?;
 
         Ok(())
     }
@@ -466,11 +462,11 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
-                input_mode_l: 1,     // Left
-                input_mode_r: 2,     // Right
+                input_mode_l: 1, // Left
+                input_mode_r: 2, // Right
                 delay_time_l: 0.5,
                 delay_time_r: 0.5,
-                note_l: 3,           // Quarter
+                note_l: 3, // Quarter
                 note_r: 3,
                 deviation_l: 0.0,
                 deviation_r: 0.0,
@@ -489,14 +485,13 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_lr: 0.0,
                 crossfeed_rl: 0.0,
                 crossfeed_phase: false,
-                routing: 0,          // Customized
+                routing: 0, // Customized
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 1.0,
                 output_mix_r: 1.0,
             },
         },
-
         // ── 2. Simple Slap ─────────────────────────────────────────────
         // Classic slapback echo: short delay with zero feedback for a
         // single distinct repeat. Slightly different L/R times add a
@@ -523,21 +518,20 @@ fn build_factory_presets() -> Vec<PresetData> {
                 low_cut_r: 20.0,
                 high_cut_l: 20000.0,
                 high_cut_r: 20000.0,
-                feedback_l: 0.0,     // No feedback — single repeat only
+                feedback_l: 0.0, // No feedback — single repeat only
                 feedback_r: 0.0,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0,
                 crossfeed_rl: 0.0,
                 crossfeed_phase: false,
-                routing: 1,          // Straight
+                routing: 1, // Straight
                 tempo_sync: false,
                 stereo_link: false,
-                output_mix_l: 0.7,   // Wet level below unity for subtle effect
+                output_mix_l: 0.7, // Wet level below unity for subtle effect
                 output_mix_r: 0.7,
             },
         },
-
         // ── 3. Ambient Wash ────────────────────────────────────────────
         // Long, lush delay with high feedback for slowly decaying
         // repeats that blend into a wash of sound. Low-cut removes
@@ -549,37 +543,36 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
-                input_mode_l: 3,     // L+R (mono sum for even wash)
-                input_mode_r: 3,     // L+R
+                input_mode_l: 3, // L+R (mono sum for even wash)
+                input_mode_r: 3, // L+R
                 delay_time_l: 1.2,
-                delay_time_r: 1.6,   // Offset creates cascading repeats
-                note_l: 1,           // Half note
+                delay_time_r: 1.6, // Offset creates cascading repeats
+                note_l: 1,         // Half note
                 note_r: 1,
-                deviation_l: 8.0,    // Slight detune for richness
+                deviation_l: 8.0, // Slight detune for richness
                 deviation_r: -5.0,
                 halve_l: false,
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 250.0,    // Aggressive low-cut to prevent mud
+                low_cut_l: 250.0, // Aggressive low-cut to prevent mud
                 low_cut_r: 250.0,
-                high_cut_l: 6000.0,  // Soft high-cut for warmth
+                high_cut_l: 6000.0, // Soft high-cut for warmth
                 high_cut_r: 6000.0,
-                feedback_l: 0.72,    // High feedback — long tail
+                feedback_l: 0.72, // High feedback — long tail
                 feedback_r: 0.72,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.3,   // Crossfeed for spatial depth
+                crossfeed_lr: 0.3, // Crossfeed for spatial depth
                 crossfeed_rl: 0.3,
                 crossfeed_phase: false,
-                routing: 0,          // Customized (crossfeed via manual amounts)
+                routing: 0, // Customized (crossfeed via manual amounts)
                 tempo_sync: true,
                 stereo_link: false,
                 output_mix_l: 0.85,
                 output_mix_r: 0.85,
             },
         },
-
         // ── 4. Ping Pong ───────────────────────────────────────────────
         // Classic ping-pong delay where each repeat bounces L↔R.
         // The Ping Pong routing mode routes all feedback to the
@@ -595,7 +588,7 @@ fn build_factory_presets() -> Vec<PresetData> {
                 input_mode_r: 3,     // L+R
                 delay_time_l: 0.375, // Dotted eighth feel (3/8 note)
                 delay_time_r: 0.375,
-                note_l: 5,           // Eighth
+                note_l: 5, // Eighth
                 note_r: 5,
                 deviation_l: 0.0,
                 deviation_r: 0.0,
@@ -603,7 +596,7 @@ fn build_factory_presets() -> Vec<PresetData> {
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 100.0,    // Gentle low-cut
+                low_cut_l: 100.0, // Gentle low-cut
                 low_cut_r: 100.0,
                 high_cut_l: 10000.0,
                 high_cut_r: 10000.0,
@@ -611,17 +604,16 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_r: 0.55,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.0,   // Not used in Ping Pong routing
+                crossfeed_lr: 0.0, // Not used in Ping Pong routing
                 crossfeed_rl: 0.0,
                 crossfeed_phase: false,
-                routing: 5,          // Ping Pong
+                routing: 5, // Ping Pong
                 tempo_sync: true,
                 stereo_link: true,
                 output_mix_l: 0.8,
                 output_mix_r: 0.8,
             },
         },
-
         // ── 5. Rotary ──────────────────────────────────────────────────
         // Rotary-speaker-inspired delay using the Rotate routing mode.
         // The LFO in the Rotate mode modulates the stereo panning of
@@ -633,13 +625,13 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
-                input_mode_l: 1,     // Left
-                input_mode_r: 2,     // Right
+                input_mode_l: 1, // Left
+                input_mode_r: 2, // Right
                 delay_time_l: 0.5,
                 delay_time_r: 0.5,
-                note_l: 3,           // Quarter
+                note_l: 3, // Quarter
                 note_r: 3,
-                deviation_l: 5.0,    // Subtle detune for rotary character
+                deviation_l: 5.0, // Subtle detune for rotary character
                 deviation_r: -5.0,
                 halve_l: false,
                 halve_r: false,
@@ -647,23 +639,22 @@ fn build_factory_presets() -> Vec<PresetData> {
                 double_r: false,
                 low_cut_l: 80.0,
                 low_cut_r: 80.0,
-                high_cut_l: 8000.0,  // Band-limited for speaker simulation
+                high_cut_l: 8000.0, // Band-limited for speaker simulation
                 high_cut_r: 8000.0,
                 feedback_l: 0.5,
                 feedback_r: 0.5,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.0,   // Not used in Rotate routing
+                crossfeed_lr: 0.0, // Not used in Rotate routing
                 crossfeed_rl: 0.0,
                 crossfeed_phase: false,
-                routing: 7,          // Rotate
+                routing: 7, // Rotate
                 tempo_sync: false,
                 stereo_link: true,
                 output_mix_l: 0.75,
                 output_mix_r: 0.75,
             },
         },
-
         // ── 6. Tight Doubler ───────────────────────────────────────────
         // Extremely short delay times that simulate double-tracking.
         // The human ear cannot resolve the delay as a distinct echo
@@ -681,31 +672,30 @@ fn build_factory_presets() -> Vec<PresetData> {
                 delay_time_r: 0.024, // 24 ms — still imperceptible as echo
                 note_l: 11,          // 1/64 (shortest available)
                 note_r: 11,
-                deviation_l: 15.0,   // Slight pitch drift for realism
+                deviation_l: 15.0, // Slight pitch drift for realism
                 deviation_r: -12.0,
                 halve_l: false,
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 80.0,     // Remove sub build-up
+                low_cut_l: 80.0, // Remove sub build-up
                 low_cut_r: 80.0,
                 high_cut_l: 12000.0,
                 high_cut_r: 12000.0,
-                feedback_l: 0.0,     // No feedback — keep it tight
+                feedback_l: 0.0, // No feedback — keep it tight
                 feedback_r: 0.0,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.15,  // Subtle crossfeed for cohesion
+                crossfeed_lr: 0.15, // Subtle crossfeed for cohesion
                 crossfeed_rl: 0.15,
                 crossfeed_phase: false,
-                routing: 0,          // Customized
+                routing: 0, // Customized
                 tempo_sync: false,
                 stereo_link: false,
-                output_mix_l: 0.6,   // Mix below unity — augment, don't replace
+                output_mix_l: 0.6, // Mix below unity — augment, don't replace
                 output_mix_r: 0.6,
             },
         },
-
         // ── 7. Space Echo ──────────────────────────────────────────────
         // Emulation of the classic Roland Space Echo tape delay.
         // Tape echoes are characterised by:
@@ -725,31 +715,30 @@ fn build_factory_presets() -> Vec<PresetData> {
                 delay_time_r: 0.420, // Offset for stereo tape head spacing
                 note_l: 5,           // Eighth
                 note_r: 5,
-                deviation_l: 7.0,    // Tape wow/flutter simulation
+                deviation_l: 7.0, // Tape wow/flutter simulation
                 deviation_r: -4.0,
                 halve_l: false,
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 120.0,    // Tape rolls off low end
+                low_cut_l: 120.0, // Tape rolls off low end
                 low_cut_r: 120.0,
-                high_cut_l: 4500.0,  // Tape significantly rolls off highs
+                high_cut_l: 4500.0, // Tape significantly rolls off highs
                 high_cut_r: 4500.0,
-                feedback_l: 0.55,    // Moderate feedback for trailing repeats
+                feedback_l: 0.55, // Moderate feedback for trailing repeats
                 feedback_r: 0.55,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.1,   // Subtle crossfeed between tape heads
+                crossfeed_lr: 0.1, // Subtle crossfeed between tape heads
                 crossfeed_rl: 0.1,
                 crossfeed_phase: false,
-                routing: 0,          // Customized
+                routing: 0, // Customized
                 tempo_sync: true,
                 stereo_link: false,
                 output_mix_l: 0.75,
                 output_mix_r: 0.75,
             },
         },
-
         // ── 8. Stereo Widener ──────────────────────────────────────────
         // Uses crossfeed to blend a small amount of each channel's
         // delayed signal into the opposite channel, creating a
@@ -774,25 +763,24 @@ fn build_factory_presets() -> Vec<PresetData> {
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 120.0,    // Remove low-frequency mono content
+                low_cut_l: 120.0, // Remove low-frequency mono content
                 low_cut_r: 120.0,
-                high_cut_l: 9000.0,  // Gentle high-cut for smooth blend
+                high_cut_l: 9000.0, // Gentle high-cut for smooth blend
                 high_cut_r: 9000.0,
-                feedback_l: 0.15,    // Low feedback — just a hint of repeat
+                feedback_l: 0.15, // Low feedback — just a hint of repeat
                 feedback_r: 0.15,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.4,   // Significant crossfeed for width
+                crossfeed_lr: 0.4, // Significant crossfeed for width
                 crossfeed_rl: 0.4,
                 crossfeed_phase: true, // Inverted phase enhances stereo width
-                routing: 0,          // Customized
+                routing: 0,            // Customized
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 0.65,
                 output_mix_r: 0.65,
             },
         },
-
         // ── 9. Rhythmic Delay ──────────────────────────────────────────
         // Tempo-synced delay with a triplet feel for creating
         // rhythmic patterns. The left channel uses a dotted-eighth
@@ -805,37 +793,36 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
-                input_mode_l: 3,     // L+R (mono input for even rhythmic pattern)
-                input_mode_r: 3,     // L+R
-                delay_time_l: 0.5,   // Overridden by tempo sync + note value
+                input_mode_l: 3,   // L+R (mono input for even rhythmic pattern)
+                input_mode_r: 3,   // L+R
+                delay_time_l: 0.5, // Overridden by tempo sync + note value
                 delay_time_r: 0.5,
-                note_l: 6,           // 1/8T — triplet eighth (dotted feel)
-                note_r: 4,           // 1/4T — triplet quarter
+                note_l: 6, // 1/8T — triplet eighth (dotted feel)
+                note_r: 4, // 1/4T — triplet quarter
                 deviation_l: 0.0,
                 deviation_r: 0.0,
                 halve_l: false,
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 150.0,    // Cut lows to keep rhythm tight
+                low_cut_l: 150.0, // Cut lows to keep rhythm tight
                 low_cut_r: 150.0,
                 high_cut_l: 7000.0,
                 high_cut_r: 7000.0,
-                feedback_l: 0.5,     // Enough repeats to establish the rhythm
+                feedback_l: 0.5, // Enough repeats to establish the rhythm
                 feedback_r: 0.45,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.15,  // Slight crossfeed for cohesion
+                crossfeed_lr: 0.15, // Slight crossfeed for cohesion
                 crossfeed_rl: 0.15,
                 crossfeed_phase: false,
-                routing: 3,          // 90/10 — mostly self-feedback with hint of cross
-                tempo_sync: true,    // Essential for rhythmic use
+                routing: 3,       // 90/10 — mostly self-feedback with hint of cross
+                tempo_sync: true, // Essential for rhythmic use
                 stereo_link: false,
                 output_mix_l: 0.7,
                 output_mix_r: 0.7,
             },
         },
-
         // ── 10. Vintage Tape ───────────────────────────────────────────
         // Heavily band-limited feedback simulating the frequency
         // response of aging tape. Lower high-cut than Space Echo for
@@ -854,24 +841,24 @@ fn build_factory_presets() -> Vec<PresetData> {
                 delay_time_r: 0.310, // Slight offset for analog feel
                 note_l: 5,           // Eighth
                 note_r: 5,
-                deviation_l: 12.0,   // More wow than Space Echo
+                deviation_l: 12.0, // More wow than Space Echo
                 deviation_r: -9.0,
                 halve_l: false,
                 halve_r: false,
                 double_l: false,
                 double_r: false,
-                low_cut_l: 200.0,    // Aggressive low-cut — old tape has no subs
+                low_cut_l: 200.0, // Aggressive low-cut — old tape has no subs
                 low_cut_r: 200.0,
-                high_cut_l: 3000.0,  // Dark — aged tape rolls off highs severely
+                high_cut_l: 3000.0, // Dark — aged tape rolls off highs severely
                 high_cut_r: 3000.0,
-                feedback_l: 0.6,     // Moderate-high feedback for decaying tape repeats
+                feedback_l: 0.6, // Moderate-high feedback for decaying tape repeats
                 feedback_r: 0.6,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0,
                 crossfeed_rl: 0.0,
                 crossfeed_phase: false,
-                routing: 3,          // 90/10 — mostly straight with subtle cross
+                routing: 3, // 90/10 — mostly straight with subtle cross
                 tempo_sync: true,
                 stereo_link: false,
                 output_mix_l: 0.75,
@@ -913,7 +900,9 @@ fn resolve_user_preset_dir() -> PathBuf {
 /// Return the macOS Application Support directory for the current user.
 fn dirs_data_home_macos() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME") {
-        PathBuf::from(home).join("Library").join("Application Support")
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
     } else {
         PathBuf::from("/tmp/NebulaAudio") // Fallback for unusual environments
     }
@@ -1013,9 +1002,7 @@ fn now_iso8601() -> String {
     let minute = (remaining / 60) as u32;
     let second = (remaining % 60) as u32;
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 /// Check if a year is a leap year (Gregorian calendar).
@@ -1026,7 +1013,11 @@ fn is_leap_year(year: u32) -> bool {
 /// Convert a zero-based day-of-year into month (1–12) and day (1–31).
 fn day_of_year_to_month_day(day_of_year: u32, days_before_month: &[u32; 12]) -> (u32, u32) {
     for (i, &start) in days_before_month.iter().enumerate() {
-        let next = if i + 1 < 12 { days_before_month[i + 1] } else { 366 };
+        let next = if i + 1 < 12 {
+            days_before_month[i + 1]
+        } else {
+            366
+        };
         if day_of_year < next {
             return ((i as u32) + 1, day_of_year - start + 1);
         }
@@ -1052,7 +1043,11 @@ mod tests {
     #[test]
     fn factory_preset_names() {
         let manager = PresetManager::new();
-        let names: Vec<&str> = manager.factory_presets().iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = manager
+            .factory_presets()
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         assert_eq!(
             names,
             vec![
@@ -1100,7 +1095,11 @@ mod tests {
     #[test]
     fn simple_slap_has_no_feedback() {
         let manager = PresetManager::new();
-        let slap = manager.factory_presets().iter().find(|p| p.name == "Simple Slap").unwrap();
+        let slap = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Simple Slap")
+            .unwrap();
         assert_eq!(slap.values.feedback_l, 0.0);
         assert_eq!(slap.values.feedback_r, 0.0);
     }
@@ -1108,28 +1107,44 @@ mod tests {
     #[test]
     fn ping_pong_uses_correct_routing() {
         let manager = PresetManager::new();
-        let pp = manager.factory_presets().iter().find(|p| p.name == "Ping Pong").unwrap();
+        let pp = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Ping Pong")
+            .unwrap();
         assert_eq!(pp.values.routing, 5); // PingPong
     }
 
     #[test]
     fn rotary_uses_correct_routing() {
         let manager = PresetManager::new();
-        let rot = manager.factory_presets().iter().find(|p| p.name == "Rotary").unwrap();
+        let rot = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Rotary")
+            .unwrap();
         assert_eq!(rot.values.routing, 7); // Rotate
     }
 
     #[test]
     fn rhythmic_delay_is_tempo_synced() {
         let manager = PresetManager::new();
-        let rd = manager.factory_presets().iter().find(|p| p.name == "Rhythmic Delay").unwrap();
+        let rd = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Rhythmic Delay")
+            .unwrap();
         assert!(rd.values.tempo_sync);
     }
 
     #[test]
     fn stereo_widener_has_inverted_crossfeed() {
         let manager = PresetManager::new();
-        let sw = manager.factory_presets().iter().find(|p| p.name == "Stereo Widener").unwrap();
+        let sw = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Stereo Widener")
+            .unwrap();
         assert!(sw.values.crossfeed_phase);
         assert!(sw.values.crossfeed_lr > 0.0);
         assert!(sw.values.crossfeed_rl > 0.0);
@@ -1138,7 +1153,11 @@ mod tests {
     #[test]
     fn tight_doubler_short_delay() {
         let manager = PresetManager::new();
-        let td = manager.factory_presets().iter().find(|p| p.name == "Tight Doubler").unwrap();
+        let td = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Tight Doubler")
+            .unwrap();
         // Both delays should be well under 30 ms (Haas zone)
         assert!(td.values.delay_time_l < 0.030);
         assert!(td.values.delay_time_r < 0.030);
@@ -1147,7 +1166,11 @@ mod tests {
     #[test]
     fn ambient_wash_has_low_cut() {
         let manager = PresetManager::new();
-        let aw = manager.factory_presets().iter().find(|p| p.name == "Ambient Wash").unwrap();
+        let aw = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Ambient Wash")
+            .unwrap();
         assert!(aw.values.low_cut_l > 100.0);
         assert!(aw.values.low_cut_r > 100.0);
         assert!(aw.values.feedback_l > 0.6); // High feedback
@@ -1156,9 +1179,13 @@ mod tests {
     #[test]
     fn vintage_tape_is_band_limited() {
         let manager = PresetManager::new();
-        let vt = manager.factory_presets().iter().find(|p| p.name == "Vintage Tape").unwrap();
+        let vt = manager
+            .factory_presets()
+            .iter()
+            .find(|p| p.name == "Vintage Tape")
+            .unwrap();
         assert!(vt.values.high_cut_l < 5000.0); // Dark
-        assert!(vt.values.low_cut_l > 100.0);   // Low-cut
+        assert!(vt.values.low_cut_l > 100.0); // Low-cut
     }
 
     #[test]

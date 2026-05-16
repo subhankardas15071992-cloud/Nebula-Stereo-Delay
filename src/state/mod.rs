@@ -412,8 +412,8 @@ impl StateManager {
 
         // Fill the FFT input with a mono mixdown of the last FFT_SIZE samples,
         // applying a Hann window to reduce spectral leakage.
-        let start = if len > FFT_SIZE { len - FFT_SIZE } else { 0 };
-        let offset = if len > FFT_SIZE { 0 } else { FFT_SIZE - len };
+        let start = len.saturating_sub(FFT_SIZE);
+        let offset = FFT_SIZE.saturating_sub(len);
 
         for i in start..len {
             let window_idx = offset + (i - start);
@@ -662,8 +662,12 @@ mod tests {
 
         // Bin 0 magnitude should equal FFT_SIZE (DC sum).
         let dc_mag = (re[0] * re[0] + im[0] * im[0]).sqrt();
-        assert!((dc_mag - FFT_SIZE as f32).abs() < 1e-3,
-            "DC magnitude: expected {}, got {}", FFT_SIZE, dc_mag);
+        assert!(
+            (dc_mag - FFT_SIZE as f32).abs() < 1e-3,
+            "DC magnitude: expected {}, got {}",
+            FFT_SIZE,
+            dc_mag
+        );
 
         // All other bins should be near zero.
         for k in 1..NUM_BINS {
@@ -682,22 +686,26 @@ mod tests {
 
         let mut re = [0.0f32; FFT_SIZE];
         let mut im = [0.0f32; FFT_SIZE];
-        for n in 0..FFT_SIZE {
-            re[n] = (2.0 * PI * freq * n as f32 / sample_rate).sin();
+        for (n, sample) in re.iter_mut().enumerate() {
+            *sample = (2.0 * PI * freq * n as f32 / sample_rate).sin();
         }
         fft_radix2(&mut re, &mut im);
 
         // Bin target_bin should have the largest magnitude.
-        let target_mag = (re[target_bin] * re[target_bin]
-            + im[target_bin] * im[target_bin]).sqrt();
+        let target_mag = (re[target_bin] * re[target_bin] + im[target_bin] * im[target_bin]).sqrt();
         for k in 1..NUM_BINS {
             if k == target_bin {
                 continue;
             }
             let mag = (re[k] * re[k] + im[k] * im[k]).sqrt();
-            assert!(target_mag > mag,
+            assert!(
+                target_mag > mag,
                 "Bin {} mag {} should be less than target bin {} mag {}",
-                k, mag, target_bin, target_mag);
+                k,
+                mag,
+                target_bin,
+                target_mag
+            );
         }
     }
 
@@ -727,8 +735,13 @@ mod tests {
         for n in 0..FFT_SIZE / 2 {
             let a = hann_window(n, FFT_SIZE);
             let b = hann_window(FFT_SIZE - 1 - n, FFT_SIZE);
-            assert!((a - b).abs() < 1e-6,
-                "Hann window not symmetric at n={}: {} != {}", n, a, b);
+            assert!(
+                (a - b).abs() < 1e-6,
+                "Hann window not symmetric at n={}: {} != {}",
+                n,
+                a,
+                b
+            );
         }
     }
 
@@ -743,8 +756,16 @@ mod tests {
         // so the closest sample is slightly below 1.0 — within 0.02%.
         let centre = FFT_SIZE / 2;
         let peak = hann_window(centre, FFT_SIZE);
-        assert!(peak > 0.999, "Hann centre value should be > 0.999, got {}", peak);
-        assert!(peak <= 1.0, "Hann centre value should be <= 1.0, got {}", peak);
+        assert!(
+            peak > 0.999,
+            "Hann centre value should be > 0.999, got {}",
+            peak
+        );
+        assert!(
+            peak <= 1.0,
+            "Hann centre value should be <= 1.0, got {}",
+            peak
+        );
     }
 
     // ── StateManager integration ──────────────────────────────────────
@@ -773,7 +794,10 @@ mod tests {
         sm.compute_spectrum(&buf_l, &buf_r, 44100.0);
 
         let frame = sm.spectrum.read();
-        assert!(frame.is_some(), "spectrum data should be available after compute");
+        assert!(
+            frame.is_some(),
+            "spectrum data should be available after compute"
+        );
         let frame = frame.unwrap();
         assert_eq!(frame.bins.len(), NUM_BINS);
         assert!((frame.sample_rate - 44100.0).abs() < 1e-3);
@@ -795,9 +819,13 @@ mod tests {
         // the largest bin.
         let dc = frame.bins[0];
         for k in 1..NUM_BINS {
-            assert!(dc >= frame.bins[k],
+            assert!(
+                dc >= frame.bins[k],
                 "Bin {} ({}) should not exceed DC bin ({}) for DC input",
-                k, frame.bins[k], dc);
+                k,
+                frame.bins[k],
+                dc
+            );
         }
     }
 
@@ -822,6 +850,10 @@ mod tests {
         let frame = frame.unwrap();
         // The DC bin should be non-trivially large (the windowed DC input
         // produces a clear peak at bin 0).
-        assert!(frame.bins[0] > 0.1, "DC bin should be > 0.1, got {}", frame.bins[0]);
+        assert!(
+            frame.bins[0] > 0.1,
+            "DC bin should be > 0.1, got {}",
+            frame.bins[0]
+        );
     }
 }

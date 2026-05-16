@@ -40,15 +40,14 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use nih_plug::params::enums::Enum;
 use nih_plug::params::Param;
 use nih_plug::prelude::{Editor, ParamSetter};
 use nih_plug_egui::egui::{
-    self, vec2, Button, Color32, Context, Frame, Id, Painter, Pos2, Rect, Response,
-    Rounding, Sense, Shape, Stroke, Ui, Vec2, WidgetText,
+    self, vec2, Button, Color32, Context, CornerRadius, Frame, Painter, Pos2, Rect, Response,
+    Sense, Shape, Stroke, Ui,
 };
 use nih_plug_egui::EguiState;
-
-use nih_plug::params::enums::Enum;
 
 use crate::parameters::{
     InputModeParam, NebulaStereoDelayParams, NoteValueParam, ParamSnapshot, RoutingModeParam,
@@ -86,9 +85,9 @@ const DANGER: Color32 = Color32::from_rgb(0xCC, 0x33, 0x33);
 const BORDER: Color32 = Color32::from_rgb(0x3A, 0x3A, 0x3A);
 
 /// Arc start angle: −135° (7-o'clock position).
-const ARC_START: f32 = -135.0_f32.to_radians();
+const ARC_START: f32 = -3.0 * std::f32::consts::FRAC_PI_4;
 /// Arc end angle: +135° (5-o'clock position).
-const ARC_END: f32 = 135.0_f32.to_radians();
+const ARC_END: f32 = 3.0 * std::f32::consts::FRAC_PI_4;
 /// Total sweep = 270°.
 const ARC_SWEEP: f32 = ARC_END - ARC_START;
 
@@ -122,9 +121,7 @@ struct EditorState {
 /// `editor()` method. The window starts at 1200 × 700 logical pixels and
 /// is freely resizable via the corner drag handle; all elements scale
 /// proportionally with the window size and system DPI.
-pub fn create_egui_editor(
-    params: Arc<NebulaStereoDelayParams>,
-) -> Option<Box<dyn Editor>> {
+pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dyn Editor>> {
     let egui_state = EguiState::from_size(WIN_W, WIN_H);
     let egui_state_for_closure = egui_state.clone();
 
@@ -143,9 +140,10 @@ pub fn create_egui_editor(
             // Use ResizableWindow so the user can drag the corner to resize.
             // The egui_state reference is shared with the EguiEditor wrapper
             // for window-size coordination.
+            let egui_state = state.egui_state.clone();
             nih_plug_egui::resizable_window::ResizableWindow::new("nebula-stereo-delay")
                 .min_size(vec2(600.0, 400.0))
-                .show(ctx, state.egui_state.as_ref(), |ui| {
+                .show(ctx, egui_state.as_ref(), |ui| {
                     draw_root(ui, state, setter);
                 });
         },
@@ -224,27 +222,18 @@ enum Channel {
 // Top Bar
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn draw_top_bar(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
-    Frame::none()
+fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
+    Frame::NONE
         .fill(PANEL_BG)
         .stroke(Stroke::new(1.0, BORDER))
-        .rounding(Rounding::same(4.0 * s))
+        .corner_radius(corner_radius(4.0 * s))
         .show(ui, |ui| {
             ui.set_min_height(36.0 * s);
             ui.horizontal_centered(|ui| {
                 ui.add_space(12.0 * s);
 
                 // Plugin name
-                ui.label(
-                    rich("NEBULA STEREO DELAY", 14.0 * s)
-                        .color(ACCENT)
-                        .strong(),
-                );
+                ui.label(rich("NEBULA STEREO DELAY", 14.0 * s).color(ACCENT).strong());
                 ui.label(rich("v1.0", 9.0 * s).color(TEXT_SEC));
                 ui.add_space(14.0 * s);
 
@@ -286,26 +275,25 @@ fn draw_preset_button(ui: &mut Ui, s: f32) {
         Button::new(rich("Preset", 11.0 * s).color(TEXT_PRI))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     resp.on_hover_text("Preset management: save, load, and recall");
 }
 
-fn draw_ab_button(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_ab_button(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let slot = state.params.ab_state.load(Ordering::Relaxed);
     let label = if slot == 0 { "A" } else { "B" };
     let active = slot == 1;
 
     let resp = ui.add(
-        Button::new(rich(label, 13.0 * s).color(if active { TEXT_PRI } else { TEXT_SEC }).strong())
-            .fill(if active { BTN_ON } else { BTN_OFF })
-            .stroke(Stroke::new(1.0, if active { ACCENT } else { BORDER }))
-            .rounding(Rounding::same(3.0 * s)),
+        Button::new(
+            rich(label, 13.0 * s)
+                .color(if active { TEXT_PRI } else { TEXT_SEC })
+                .strong(),
+        )
+        .fill(if active { BTN_ON } else { BTN_OFF })
+        .stroke(Stroke::new(1.0, if active { ACCENT } else { BORDER }))
+        .corner_radius(corner_radius(3.0 * s)),
     );
 
     if resp.clicked() {
@@ -324,17 +312,12 @@ fn draw_ab_button(
     resp.on_hover_text("Toggle A/B comparison");
 }
 
-fn draw_undo_btn(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_undo_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let resp = ui.add(
         Button::new(rich("\u{2190}", 14.0 * s).color(TEXT_SEC))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         let current = take_snapshot(&state.params);
@@ -347,17 +330,12 @@ fn draw_undo_btn(
     resp.on_hover_text("Undo");
 }
 
-fn draw_redo_btn(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_redo_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let resp = ui.add(
         Button::new(rich("\u{2192}", 14.0 * s).color(TEXT_SEC))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         let current = take_snapshot(&state.params);
@@ -370,12 +348,7 @@ fn draw_redo_btn(
     resp.on_hover_text("Redo");
 }
 
-fn draw_bypass_btn(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    _setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_bypass_btn(ui: &mut Ui, state: &mut EditorState, _setter: &ParamSetter<'_>, s: f32) {
     let bypassed = state.params.bypass.load(Ordering::Relaxed);
     let (label, fg, bg, st) = if bypassed {
         ("FX OFF", TEXT_PRI, DANGER, DANGER)
@@ -387,7 +360,7 @@ fn draw_bypass_btn(
         Button::new(rich(label, 11.0 * s).color(fg).strong())
             .fill(bg)
             .stroke(Stroke::new(1.0, st))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         state.params.bypass.store(!bypassed, Ordering::Relaxed);
@@ -399,12 +372,7 @@ fn draw_bypass_btn(
     });
 }
 
-fn draw_sync_btn(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_sync_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let synced = state.params.tempo_sync.value();
     let (label, fg, bg, st) = if synced {
         ("SYNC", TEXT_PRI, BTN_ON, ACCENT)
@@ -416,7 +384,7 @@ fn draw_sync_btn(
         Button::new(rich(label, 11.0 * s).color(fg).strong())
             .fill(bg)
             .stroke(Stroke::new(1.0, st))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         setter.begin_set_parameter(&state.params.tempo_sync);
@@ -430,12 +398,7 @@ fn draw_sync_btn(
     });
 }
 
-fn draw_link_btn(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_link_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let linked = state.params.stereo_link.value();
     let (label, fg, bg, st) = if linked {
         ("LINKED", TEXT_PRI, BTN_ON, ACCENT)
@@ -447,7 +410,7 @@ fn draw_link_btn(
         Button::new(rich(label, 11.0 * s).color(fg).strong())
             .fill(bg)
             .stroke(Stroke::new(1.0, st))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         setter.begin_set_parameter(&state.params.stereo_link);
@@ -473,11 +436,13 @@ fn draw_channel_panel(
     ch: Channel,
     width: f32,
 ) {
-    Frame::none()
+    Frame::NONE
         .fill(PANEL_BG)
         .stroke(Stroke::new(1.0, BORDER))
-        .rounding(Rounding::same(6.0 * s))
+        .corner_radius(corner_radius(6.0 * s))
         .show(ui, |ui| {
+            let params = state.params.clone();
+
             ui.set_min_width(width);
             ui.set_max_width(width);
             ui.vertical(|ui| {
@@ -499,14 +464,22 @@ fn draw_channel_panel(
                 // Low Cut / High Cut side-by-side
                 ui.horizontal(|ui| {
                     draw_knob_field(
-                        ui, state, setter, s,
-                        ch_knob_param!(state, ch, low_cut_l, low_cut_r),
-                        "LOW CUT", KnobSize::Small,
+                        ui,
+                        state,
+                        setter,
+                        s,
+                        ch_knob_param!(params, ch, low_cut_l, low_cut_r),
+                        "LOW CUT",
+                        KnobSize::Small,
                     );
                     draw_knob_field(
-                        ui, state, setter, s,
-                        ch_knob_param!(state, ch, high_cut_l, high_cut_r),
-                        "HIGH CUT", KnobSize::Small,
+                        ui,
+                        state,
+                        setter,
+                        s,
+                        ch_knob_param!(params, ch, high_cut_l, high_cut_r),
+                        "HIGH CUT",
+                        KnobSize::Small,
                     );
                 });
                 ui.add_space(6.0 * s);
@@ -514,9 +487,13 @@ fn draw_channel_panel(
                 // Feedback + Phase
                 ui.horizontal(|ui| {
                     draw_knob_field(
-                        ui, state, setter, s,
-                        ch_knob_param!(state, ch, feedback_l, feedback_r),
-                        "FEEDBACK", KnobSize::Small,
+                        ui,
+                        state,
+                        setter,
+                        s,
+                        ch_knob_param!(params, ch, feedback_l, feedback_r),
+                        "FEEDBACK",
+                        KnobSize::Small,
                     );
                     let phase_param = if ch == Channel::Left {
                         &state.params.feedback_phase_l
@@ -534,9 +511,13 @@ fn draw_channel_panel(
                     "R\u{2192}L"
                 };
                 draw_knob_field(
-                    ui, state, setter, s,
-                    ch_knob_param!(state, ch, crossfeed_lr, crossfeed_rl),
-                    cf_label, KnobSize::Small,
+                    ui,
+                    state,
+                    setter,
+                    s,
+                    ch_knob_param!(params, ch, crossfeed_lr, crossfeed_rl),
+                    cf_label,
+                    KnobSize::Small,
                 );
 
                 ui.add_space(6.0 * s);
@@ -546,11 +527,11 @@ fn draw_channel_panel(
 
 /// Macro to select the L or R variant of a parameter pair.
 macro_rules! ch_knob_param {
-    ($state:expr, $ch:expr, $l:ident, $r:ident) => {
+    ($params:expr, $ch:expr, $l:ident, $r:ident) => {
         if $ch == Channel::Left {
-            &$state.params.$l
+            &$params.$l
         } else {
-            &$state.params.$r
+            &$params.$r
         }
     };
 }
@@ -571,14 +552,14 @@ fn draw_input_popup(
         &state.params.input_mode_r
     };
 
-    let current_name = param.value().name();
+    let current_name = enum_name(param.value());
     let label = format!("Input: {current_name}");
 
     let resp = ui.add(
         Button::new(rich(&label, 10.0 * s).color(TEXT_PRI))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
 
     let popup_id = ui.id().with(if ch == Channel::Left {
@@ -602,20 +583,22 @@ fn draw_input_popup(
         ui,
         popup_id,
         &resp,
+        egui::AboveOrBelow::Below,
         egui::popup::PopupCloseBehavior::CloseOnClick,
         |ui| {
-            Frame::none()
+            Frame::NONE
                 .fill(PANEL_BG)
                 .stroke(Stroke::new(1.0, BORDER))
                 .show(ui, |ui| {
                     for (variant, name) in variants {
-                        let sel = variant.name() == current_name;
-                        let btn = Button::new(
-                            rich(name, 10.0 * s)
-                                .color(if sel { ACCENT } else { TEXT_PRI }),
-                        )
+                        let sel = enum_name(variant) == current_name;
+                        let btn = Button::new(rich(name, 10.0 * s).color(if sel {
+                            ACCENT
+                        } else {
+                            TEXT_PRI
+                        }))
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
-                        .rounding(Rounding::same(2.0));
+                        .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
                             setter.begin_set_parameter(param);
                             setter.set_parameter(param, variant);
@@ -641,24 +624,26 @@ fn draw_delay_section(
 ) {
     let synced = state.params.tempo_sync.value();
 
-    Frame::none()
+    Frame::NONE
         .fill(INSET_BG)
         .stroke(Stroke::new(1.0, BORDER))
-        .rounding(Rounding::same(4.0 * s))
+        .corner_radius(corner_radius(4.0 * s))
         .show(ui, |ui| {
+            let params = state.params.clone();
+
             ui.vertical_centered(|ui| {
                 ui.add_space(4.0 * s);
                 ui.label(rich("DELAY TIME", 9.0 * s).color(TEXT_SEC));
                 ui.add_space(2.0 * s);
 
                 // Large delay-time knob
-                let delay_param = ch_knob_param!(state, ch, delay_time_l, delay_time_r);
+                let delay_param = ch_knob_param!(params, ch, delay_time_l, delay_time_r);
                 draw_knob_field(ui, state, setter, s, delay_param, "", KnobSize::Large);
 
                 // :2  x2 buttons
                 ui.horizontal(|ui| {
-                    let halve = ch_knob_param!(state, ch, halve_l, halve_r);
-                    let double = ch_knob_param!(state, ch, double_l, double_r);
+                    let halve = ch_knob_param!(params, ch, halve_l, halve_r);
+                    let double = ch_knob_param!(params, ch, double_l, double_r);
 
                     draw_toggle_btn(ui, setter, halve, ":2", s);
                     ui.add_space(4.0 * s);
@@ -689,14 +674,14 @@ fn draw_note_popup(
         &state.params.note_r
     };
 
-    let current_name = param.value().name();
+    let current_name = enum_name(param.value());
     let label = format!("Note: {current_name}");
 
     let resp = ui.add(
         Button::new(rich(&label, 10.0 * s).color(TEXT_PRI))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
 
     let popup_id = ui.id().with(if ch == Channel::Left {
@@ -727,21 +712,23 @@ fn draw_note_popup(
         ui,
         popup_id,
         &resp,
+        egui::AboveOrBelow::Below,
         egui::popup::PopupCloseBehavior::CloseOnClick,
         |ui| {
-            Frame::none()
+            Frame::NONE
                 .fill(PANEL_BG)
                 .stroke(Stroke::new(1.0, BORDER))
                 .show(ui, |ui| {
                     ui.set_max_width(90.0 * s);
                     for (variant, name) in notes {
-                        let sel = variant.name() == current_name;
-                        let btn = Button::new(
-                            rich(name, 10.0 * s)
-                                .color(if sel { ACCENT } else { TEXT_PRI }),
-                        )
+                        let sel = enum_name(variant) == current_name;
+                        let btn = Button::new(rich(name, 10.0 * s).color(if sel {
+                            ACCENT
+                        } else {
+                            TEXT_PRI
+                        }))
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
-                        .rounding(Rounding::same(2.0));
+                        .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
                             setter.begin_set_parameter(param);
                             setter.set_parameter(param, variant);
@@ -776,7 +763,7 @@ fn draw_deviation_field(
             Button::new(rich(&text, 10.0 * s).color(TEXT_PRI))
                 .fill(WIDGET_BG)
                 .stroke(Stroke::new(1.0, BORDER))
-                .rounding(Rounding::same(3.0 * s)),
+                .corner_radius(corner_radius(3.0 * s)),
         );
 
         if resp.drag_started() {
@@ -805,10 +792,10 @@ fn draw_center_section(
     s: f32,
     width: f32,
 ) {
-    Frame::none()
+    Frame::NONE
         .fill(INSET_BG)
         .stroke(Stroke::new(1.0, BORDER))
-        .rounding(Rounding::same(6.0 * s))
+        .corner_radius(corner_radius(6.0 * s))
         .show(ui, |ui| {
             ui.set_min_width(width);
             ui.set_max_width(width);
@@ -829,20 +816,15 @@ fn draw_center_section(
         });
 }
 
-fn draw_routing_popup(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
+fn draw_routing_popup(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
     let param = &state.params.routing;
-    let current_name = param.value().name();
+    let current_name = enum_name(param.value());
 
     let resp = ui.add(
         Button::new(rich(current_name, 9.0 * s).color(TEXT_PRI))
             .fill(WIDGET_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
 
     let popup_id = ui.id().with("routing");
@@ -865,21 +847,23 @@ fn draw_routing_popup(
         ui,
         popup_id,
         &resp,
+        egui::AboveOrBelow::Below,
         egui::popup::PopupCloseBehavior::CloseOnClick,
         |ui| {
-            Frame::none()
+            Frame::NONE
                 .fill(PANEL_BG)
                 .stroke(Stroke::new(1.0, BORDER))
                 .show(ui, |ui| {
                     ui.set_max_width(110.0 * s);
                     for (variant, name) in modes {
-                        let sel = variant.name() == current_name;
-                        let btn = Button::new(
-                            rich(name, 9.0 * s)
-                                .color(if sel { ACCENT } else { TEXT_PRI }),
-                        )
+                        let sel = enum_name(variant) == current_name;
+                        let btn = Button::new(rich(name, 9.0 * s).color(if sel {
+                            ACCENT
+                        } else {
+                            TEXT_PRI
+                        }))
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
-                        .rounding(Rounding::same(2.0));
+                        .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
                             setter.begin_set_parameter(param);
                             setter.set_parameter(param, variant);
@@ -896,29 +880,34 @@ fn draw_routing_popup(
 // Bottom Bar
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn draw_bottom_bar(
-    ui: &mut Ui,
-    state: &mut EditorState,
-    setter: &ParamSetter<'_>,
-    s: f32,
-) {
-    Frame::none()
+fn draw_bottom_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
+    Frame::NONE
         .fill(PANEL_BG)
         .stroke(Stroke::new(1.0, BORDER))
-        .rounding(Rounding::same(4.0 * s))
+        .corner_radius(corner_radius(4.0 * s))
         .show(ui, |ui| {
+            let params = state.params.clone();
+
             ui.horizontal_centered(|ui| {
                 ui.add_space(24.0 * s);
                 draw_knob_field(
-                    ui, state, setter, s,
-                    &state.params.output_mix_l,
-                    "MIX L", KnobSize::Medium,
+                    ui,
+                    state,
+                    setter,
+                    s,
+                    &params.output_mix_l,
+                    "MIX L",
+                    KnobSize::Medium,
                 );
                 ui.add_space(28.0 * s);
                 draw_knob_field(
-                    ui, state, setter, s,
-                    &state.params.output_mix_r,
-                    "MIX R", KnobSize::Medium,
+                    ui,
+                    state,
+                    setter,
+                    s,
+                    &params.output_mix_r,
+                    "MIX R",
+                    KnobSize::Medium,
                 );
                 ui.add_space(24.0 * s);
             });
@@ -1012,9 +1001,7 @@ fn draw_knob_field(
         }
 
         // Ctrl/Cmd-click → also reset
-        if response.clicked()
-            && ui.input(|i| i.modifiers.command || i.modifiers.ctrl)
-        {
+        if response.clicked() && ui.input(|i| i.modifiers.command || i.modifiers.ctrl) {
             setter.begin_set_parameter(param);
             setter.set_parameter(param, param.default_plain_value());
             setter.end_set_parameter(param);
@@ -1026,7 +1013,7 @@ fn draw_knob_field(
         }
 
         // ── Tooltip ──────────────────────────────────────────
-        response.on_hover_text(format!("{}: {}", param.name(), param.to_string()));
+        let response = response.on_hover_text(format!("{}: {}", param.name(), param));
 
         // ── MIDI Learn ───────────────────────────────────────
         add_midi_learn_menu(ui, &response, &param_id_for(param.name()), state);
@@ -1037,7 +1024,7 @@ fn draw_knob_field(
             Button::new(rich(&value_text, size.font_size(s)).color(TEXT_PRI))
                 .fill(WIDGET_BG)
                 .stroke(Stroke::new(1.0, BORDER))
-                .rounding(Rounding::same(3.0 * s))
+                .corner_radius(corner_radius(3.0 * s))
                 .min_size(vec2(field_w, 0.0)),
         );
         field_resp.on_hover_text(format!("{} (drag knob to adjust)", param.name()));
@@ -1045,13 +1032,7 @@ fn draw_knob_field(
 }
 
 /// Render the knob: body circle, background arc, filled arc, indicator line, center dot.
-fn draw_knob_visual(
-    painter: &Painter,
-    rect: Rect,
-    normalized: f32,
-    size: KnobSize,
-    s: f32,
-) {
+fn draw_knob_visual(painter: &Painter, rect: Rect, normalized: f32, size: KnobSize, s: f32) {
     let center = rect.center();
     let radius = rect.width() / 2.0;
     let tw = size.track_w(s);
@@ -1062,13 +1043,27 @@ fn draw_knob_visual(
     painter.circle_stroke(center, body_r, Stroke::new(0.5 * s, BORDER));
 
     // ── Background arc (full sweep, dim) ─────────────────
-    draw_arc_line(painter, center, radius, ARC_START, ARC_END, Stroke::new(tw, KNOB_TRACK));
+    draw_arc_line(
+        painter,
+        center,
+        radius,
+        ARC_START,
+        ARC_END,
+        Stroke::new(tw, KNOB_TRACK),
+    );
 
     // ── Filled arc ───────────────────────────────────────
     let norm = normalized.clamp(0.0, 1.0);
     if norm > 0.001 {
         let fill_end = ARC_START + ARC_SWEEP * norm;
-        draw_arc_line(painter, center, radius, ARC_START, fill_end, Stroke::new(tw, ACCENT));
+        draw_arc_line(
+            painter,
+            center,
+            radius,
+            ARC_START,
+            fill_end,
+            Stroke::new(tw, ACCENT),
+        );
     }
 
     // ── Value indicator line ─────────────────────────────
@@ -1130,7 +1125,7 @@ fn draw_phase_btn(
         Button::new(rich(&display, 8.0 * s).color(if inverted { TEXT_PRI } else { TEXT_SEC }))
             .fill(if inverted { BTN_ON } else { WIDGET_BG })
             .stroke(Stroke::new(1.0, if inverted { ACCENT } else { BORDER }))
-            .rounding(Rounding::same(3.0 * s)),
+            .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         setter.begin_set_parameter(param);
@@ -1164,7 +1159,7 @@ fn draw_toggle_btn(
         )
         .fill(if on { BTN_ON } else { WIDGET_BG })
         .stroke(Stroke::new(1.0, if on { ACCENT } else { BORDER }))
-        .rounding(Rounding::same(3.0 * s)),
+        .corner_radius(corner_radius(3.0 * s)),
     );
     if resp.clicked() {
         setter.begin_set_parameter(param);
@@ -1178,19 +1173,21 @@ fn draw_toggle_btn(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Attach a right-click MIDI Learn context menu to a widget response.
-fn add_midi_learn_menu(
-    ui: &mut Ui,
-    response: &Response,
-    param_id: &str,
-    state: &mut EditorState,
-) {
+fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state: &mut EditorState) {
     response.context_menu(|ui| {
         ui.label(rich("MIDI Learn", 11.0).color(ACCENT).strong());
         ui.separator();
 
         // On / Off toggle
         let is_active = state.midi_learn_active;
-        if ui.button(if is_active { "MIDI Learn: ON" } else { "MIDI Learn: OFF" }).clicked() {
+        if ui
+            .button(if is_active {
+                "MIDI Learn: ON"
+            } else {
+                "MIDI Learn: OFF"
+            })
+            .clicked()
+        {
             state.midi_learn_active = !is_active;
             state.midi_learn_target = if !is_active {
                 Some(param_id.to_string())
@@ -1230,7 +1227,7 @@ fn add_midi_learn_menu(
             if let Some(mapping) = ml.mappings.iter().find(|m| m.param_id == param_id) {
                 ui.label(
                     rich(
-                        &format!("Mapped: CC {} Ch {}", mapping.cc, mapping.channel),
+                        format!("Mapped: CC {} Ch {}", mapping.cc, mapping.channel),
                         9.0,
                     )
                     .color(TEXT_SEC),
@@ -1439,11 +1436,22 @@ fn routing_to_index(val: RoutingModeParam) -> usize {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Shorthand to create a `RichText` with the given content and size.
-fn rich(text: impl Into<WidgetText>, size: f32) -> egui::RichText {
-    egui::RichText::new(text).size(size)
+fn rich(text: impl ToString, size: f32) -> egui::RichText {
+    egui::RichText::new(text.to_string()).size(size)
 }
 
 /// Derive a stable parameter ID string from the parameter's display name.
 fn param_id_for(name: &str) -> String {
     name.to_lowercase().replace([' ', '-', '/', '(', ')'], "_")
+}
+
+fn enum_name<T: Enum>(value: T) -> &'static str {
+    T::variants()
+        .get(value.to_index())
+        .copied()
+        .unwrap_or_default()
+}
+
+fn corner_radius(radius: f32) -> CornerRadius {
+    CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8)
 }
