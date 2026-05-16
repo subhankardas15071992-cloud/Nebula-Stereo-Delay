@@ -32,6 +32,7 @@ jobs:
             libxcb-shape0-dev \
             libxcb-xfixes0-dev \
             libx11-dev \
+            libx11-xcb-dev \
             libgl-dev \
             libasound2-dev
 
@@ -187,6 +188,7 @@ jobs:
             libxcb-shape0-dev \
             libxcb-xfixes0-dev \
             libx11-dev \
+            libx11-xcb-dev \
             libgl-dev \
             libasound2-dev
 
