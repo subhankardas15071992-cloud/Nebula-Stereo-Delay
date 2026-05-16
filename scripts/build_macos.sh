@@ -22,9 +22,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build/macos"
 
-CLAP_WRAPPER_DIR="${PROJECT_ROOT}/.clap-wrapper"
-CLAP_WRAPPER_REPO="https://github.com/free-audio/clap-wrapper.git"
-
 # ── Colors ─────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -66,6 +63,9 @@ check_tool rustup
 check_tool cargo
 check_tool clang
 check_tool lipo
+check_tool nm
+check_tool plutil
+check_tool codesign
 success "All required tools found"
 
 # ── Step 2: Add Rust targets ──────────────────────────────────────────────
@@ -107,6 +107,7 @@ success "Universal binary created ($(du -h "${UNIVERSAL_LIB}" | cut -f1))"
 step "Creating CLAP bundle..."
 
 CLAP_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.clap"
+rm -rf "${CLAP_BUNDLE}"
 mkdir -p "${CLAP_BUNDLE}/Contents/MacOS"
 
 cp "${UNIVERSAL_LIB}" "${CLAP_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
@@ -124,15 +125,22 @@ cat > "${CLAP_BUNDLE}/Contents/Info.plist" <<EOF
     <string>${VERSION}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}.clap</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>${PLUGIN_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>NSHighResolutionCapable</key>
+    <true/>
 </dict>
 </plist>
 EOF
+echo "BNDL????" > "${CLAP_BUNDLE}/Contents/PkgInfo"
 
 success "CLAP bundle created: ${CLAP_BUNDLE}"
 
@@ -140,6 +148,7 @@ success "CLAP bundle created: ${CLAP_BUNDLE}"
 step "Creating VST3 bundle..."
 
 VST3_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.vst3"
+rm -rf "${VST3_BUNDLE}"
 mkdir -p "${VST3_BUNDLE}/Contents/MacOS"
 
 cp "${UNIVERSAL_LIB}" "${VST3_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
@@ -163,67 +172,61 @@ cat > "${VST3_BUNDLE}/Contents/Info.plist" <<EOF
     <string>${PLUGIN_NAME}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>NSHighResolutionCapable</key>
+    <true/>
 </dict>
 </plist>
 EOF
+echo "BNDL????" > "${VST3_BUNDLE}/Contents/PkgInfo"
 
 success "VST3 bundle created: ${VST3_BUNDLE}"
 
-# ── Step 8: Build AUv2 via clap-wrapper ────────────────────────────────────
-step "Building AUv2 component via clap-wrapper..."
+# ── Step 8: Create AUv2 component ─────────────────────────────────────────
+step "Creating AUv2 component..."
 
-# Clone clap-wrapper if not present
-if [[ ! -d "${CLAP_WRAPPER_DIR}/.git" ]]; then
-    info "Cloning clap-wrapper repository..."
-    git clone --depth 1 "${CLAP_WRAPPER_REPO}" "${CLAP_WRAPPER_DIR}"
-else
-    info "clap-wrapper already cloned, pulling latest..."
-    (cd "${CLAP_WRAPPER_DIR}" && git pull --ff-only 2>/dev/null || warn "Could not update clap-wrapper, using existing version")
-fi
+AU2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
+rm -rf "${AU2_BUNDLE}"
+mkdir -p "${AU2_BUNDLE}/Contents/MacOS"
 
-# Build the AUv2 wrapper
-AU2_BUILD_DIR="${CLAP_WRAPPER_DIR}/build-au2"
-mkdir -p "${AU2_BUILD_DIR}"
+cp "${UNIVERSAL_LIB}" "${AU2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
 
-# Configure and build clap-wrapper for AUv2
-info "Configuring clap-wrapper for AUv2..."
-cd "${AU2_BUILD_DIR}"
-
-cmake .. \
-    -DCLAP_WRAPPER_BUILD_AUV2=ON \
-    -DCLAP_WRAPPER_BUILD_VST3=OFF \
-    -DCLAP_WRAPPER_BUILD_STANDALONE=OFF \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCLAP_WRAPPER_PLUGIN_NAME="${PLUGIN_NAME}" \
-    -DCLAP_WRAPPER_PLUGIN_VERSION="${VERSION}" \
-    -DCLAP_WRAPPER_BUNDLE_ID="${BUNDLE_ID}" \
-    -DCLAP_WRAPPER_CLAP_PATH="${CLAP_BUNDLE}" \
-    2>/dev/null || {
-        warn "clap-wrapper cmake configuration failed — attempting manual AUv2 stub build"
-        AU2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
-        mkdir -p "${AU2_BUNDLE}/Contents/MacOS"
-        cp "${UNIVERSAL_LIB}" "${AU2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
-
-        cat > "${AU2_BUNDLE}/Contents/Info.plist" <<AU2EOF
+cat > "${AU2_BUNDLE}/Contents/Info.plist" <<AU2EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
     <string>${PLUGIN_NAME}</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
+    <key>CFBundleDisplayName</key>
+    <string>${PLUGIN_NAME}</string>
+    <key>CFBundleExecutable</key>
+    <string>${PLUGIN_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}.auv2</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleExecutable</key>
-    <string>${PLUGIN_NAME}</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>NSHumanReadableCopyright</key>
+    <string>${VENDOR}</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string/>
     <key>AudioComponents</key>
     <array>
         <dict>
@@ -232,7 +235,7 @@ cmake .. \
             <key>description</key>
             <string>${PLUGIN_NAME} by ${VENDOR}</string>
             <key>factoryFunction</key>
-            <string>${BUNDLE_ID}_Factory</string>
+            <string>GetPluginFactoryAUV2_0</string>
             <key>manufacturer</key>
             <string>NebA</string>
             <key>type</key>
@@ -248,95 +251,19 @@ cmake .. \
 </dict>
 </plist>
 AU2EOF
+echo "BNDL????" > "${AU2_BUNDLE}/Contents/PkgInfo"
 
-        warn "AUv2 bundle created with raw dylib — clap-wrapper cmake failed."
-        warn "You may need to build the clap-wrapper AUv2 adapter manually."
-        warn "See: https://github.com/free-audio/clap-wrapper"
-        success "AUv2 stub bundle created: ${AU2_BUNDLE}"
-        cd "${PROJECT_ROOT}"
-        SKIP_AU2_FINAL=1
-}
+success "AUv2 component created: ${AU2_BUNDLE}"
 
-if [[ "${SKIP_AU2_FINAL:-0}" != "1" ]]; then
-    info "Building AUv2 wrapper..."
-    cmake --build . --config Release -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+# ── Step 9: Ad-hoc sign bundles ───────────────────────────────────────────
+step "Ad-hoc signing macOS bundles..."
 
-    # Locate the built AUv2 component from the clap-wrapper output
-    FOUND_COMPONENT=""
-    for search_path in \
-        "${AU2_BUILD_DIR}/${PLUGIN_NAME}.component" \
-        "${AU2_BUILD_DIR}/Release/${PLUGIN_NAME}.component" \
-        "${CLAP_WRAPPER_DIR}/build/${PLUGIN_NAME}.component"; do
-        if [[ -d "${search_path}" ]]; then
-            FOUND_COMPONENT="${search_path}"
-            break
-        fi
-    done
+for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
+    codesign --force --deep --sign - --timestamp=none "${bundle}" >/dev/null
+    success "Signed ${bundle##*/}"
+done
 
-    AU2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
-
-    if [[ -n "${FOUND_COMPONENT}" && -d "${FOUND_COMPONENT}" ]]; then
-        cp -R "${FOUND_COMPONENT}" "${AU2_BUNDLE}"
-        success "AUv2 component built and copied: ${AU2_BUNDLE}"
-    else
-        warn "Could not locate built AUv2 component in clap-wrapper output"
-        warn "Creating AUv2 bundle with universal dylib as fallback"
-
-        mkdir -p "${AU2_BUNDLE}/Contents/MacOS"
-        cp "${UNIVERSAL_LIB}" "${AU2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
-
-        cat > "${AU2_BUNDLE}/Contents/Info.plist" <<AU2EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}.auv2</string>
-    <key>CFBundlePackageType</key>
-    <string>BNDL</string>
-    <key>CFBundleExecutable</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>AudioComponents</key>
-    <array>
-        <dict>
-            <key>name</key>
-            <string>${VENDOR}: ${PLUGIN_NAME}</string>
-            <key>description</key>
-            <string>${PLUGIN_NAME} by ${VENDOR}</string>
-            <key>factoryFunction</key>
-            <string>${BUNDLE_ID}_Factory</string>
-            <key>manufacturer</key>
-            <string>NebA</string>
-            <key>type</key>
-            <string>aufx</string>
-            <key>subtype</key>
-            <string>NSDl</string>
-            <key>version</key>
-            <integer>65536</integer>
-            <key>sandboxSafe</key>
-            <true/>
-        </dict>
-    </array>
-</dict>
-</plist>
-AU2EOF
-
-        warn "AUv2 bundle created as fallback — for production use, build clap-wrapper properly"
-        success "AUv2 fallback bundle created: ${AU2_BUNDLE}"
-    fi
-
-    cd "${PROJECT_ROOT}"
-fi
-
-# ── Step 9: Validate bundles ──────────────────────────────────────────────
+# ── Step 10: Validate bundles ─────────────────────────────────────────────
 step "Validating build artifacts..."
 
 VALID=1
@@ -344,10 +271,11 @@ VALID=1
 for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
     bundle_type="${bundle##*.}"
     bundle_label="$(printf '%s' "${bundle_type}" | tr '[:lower:]' '[:upper:]')"
+    executable_path="${bundle}/Contents/MacOS/${PLUGIN_NAME}"
     if [[ -d "${bundle}" ]]; then
-        if [[ -f "${bundle}/Contents/MacOS/${PLUGIN_NAME}" ]]; then
-            if file "${bundle}/Contents/MacOS/${PLUGIN_NAME}" | grep -q "Mach-O"; then
-                if file "${bundle}/Contents/MacOS/${PLUGIN_NAME}" | grep -q "universal"; then
+        if [[ -f "${executable_path}" ]]; then
+            if file "${executable_path}" | grep -q "Mach-O"; then
+                if file "${executable_path}" | grep -q "universal"; then
                     success "${bundle_label} bundle: valid (universal binary)"
                 else
                     warn "${bundle_label} bundle: valid (single architecture)"
@@ -364,6 +292,18 @@ for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
         if [[ ! -f "${bundle}/Contents/Info.plist" ]]; then
             error "${bundle_label} bundle: missing Info.plist"
             VALID=0
+        elif ! plutil -lint "${bundle}/Contents/Info.plist" >/dev/null; then
+            error "${bundle_label} bundle: Info.plist failed plutil validation"
+            VALID=0
+        fi
+
+        if [[ "${bundle_type}" == "component" ]]; then
+            if nm -gU "${executable_path}" 2>/dev/null | grep -q "GetPluginFactoryAUV2_0"; then
+                success "AUv2 entrypoint exported: GetPluginFactoryAUV2_0"
+            else
+                error "AUv2 bundle: missing GetPluginFactoryAUV2_0 entrypoint"
+                VALID=0
+            fi
         fi
     else
         error "${bundle_label} bundle: directory not found"
@@ -371,7 +311,7 @@ for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
     fi
 done
 
-# ── Step 10: Print summary ───────────────────────────────────────────────
+# ── Step 11: Print summary ───────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════════════════${NC}"
 echo -e "${BOLD}  Build Summary — macOS Universal Binary${NC}"

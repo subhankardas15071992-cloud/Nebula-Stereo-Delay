@@ -77,11 +77,11 @@ Built with egui on macOS and Linux. The window starts at 1200x700 and scales fre
 
 | Platform | CLAP | VST3 | AUv2 |
 |----------|:----:|:----:|:----:|
-| macOS (Universal) | Yes | Yes | Yes (via clap-wrapper) |
+| macOS (Universal) | Yes | Yes | Yes |
 | Windows (x86_64) | — | Yes | — |
 | Linux (x86_64) | Yes | Yes | — |
 
-AUv2 on macOS is generated automatically at build time using the [free-audio/clap-wrapper](https://github.com/free-audio/clap-wrapper) project — no separate build step required.
+AUv2 on macOS is exported from the plugin binary through the Rust `clap-wrapper` crate and validated with `auval` in CI.
 
 ---
 

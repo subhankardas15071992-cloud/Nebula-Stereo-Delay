@@ -85,11 +85,17 @@ jobs:
           restore-keys: |
             macos-cargo-${{ runner.os }}-
 
-      - name: Install cmake (for clap-wrapper AUv2 build)
-        run: brew install cmake
-
       - name: Build plugin
         run: chmod +x scripts/build_macos.sh && ./scripts/build_macos.sh
+
+      - name: Validate AUv2 with auval
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/${{ env.PLUGIN_NAME }}.component"
+          cp -R "build/macos/${{ env.PLUGIN_NAME }}.component" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -a
+          auval -strict -v aufx NSDl NebA
 
       - name: Zip CLAP bundle
         run: |
