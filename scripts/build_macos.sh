@@ -343,29 +343,30 @@ VALID=1
 
 for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AU2_BUNDLE}"; do
     bundle_type="${bundle##*.}"
+    bundle_label="$(printf '%s' "${bundle_type}" | tr '[:lower:]' '[:upper:]')"
     if [[ -d "${bundle}" ]]; then
         if [[ -f "${bundle}/Contents/MacOS/${PLUGIN_NAME}" ]]; then
             if file "${bundle}/Contents/MacOS/${PLUGIN_NAME}" | grep -q "Mach-O"; then
                 if file "${bundle}/Contents/MacOS/${PLUGIN_NAME}" | grep -q "universal"; then
-                    success "${bundle_type^^} bundle: valid (universal binary)"
+                    success "${bundle_label} bundle: valid (universal binary)"
                 else
-                    warn "${bundle_type^^} bundle: valid (single architecture)"
+                    warn "${bundle_label} bundle: valid (single architecture)"
                 fi
             else
-                error "${bundle_type^^} bundle: executable is not a valid Mach-O binary"
+                error "${bundle_label} bundle: executable is not a valid Mach-O binary"
                 VALID=0
             fi
         else
-            error "${bundle_type^^} bundle: missing executable"
+            error "${bundle_label} bundle: missing executable"
             VALID=0
         fi
 
         if [[ ! -f "${bundle}/Contents/Info.plist" ]]; then
-            error "${bundle_type^^} bundle: missing Info.plist"
+            error "${bundle_label} bundle: missing Info.plist"
             VALID=0
         fi
     else
-        error "${bundle_type^^} bundle: directory not found"
+        error "${bundle_label} bundle: directory not found"
         VALID=0
     fi
 done
