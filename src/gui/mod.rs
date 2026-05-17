@@ -398,36 +398,6 @@ fn draw_nebula_toolbar(
     if fx.clicked() {
         state.params.bypass.store(!bypassed, Ordering::Relaxed);
     }
-
-    let params = state.params.clone();
-    nebula_bool_button(
-        ui,
-        state,
-        setter,
-        c,
-        c.rect(508.0, y, 92.0, 26.0),
-        &params.tempo_sync,
-        if params.tempo_sync.value() {
-            "SYNC"
-        } else {
-            "FREE"
-        },
-        "nebula_sync",
-    );
-    nebula_bool_button(
-        ui,
-        state,
-        setter,
-        c,
-        c.rect(608.0, y, 118.0, 26.0),
-        &params.stereo_link,
-        if params.stereo_link.value() {
-            "LINKED"
-        } else {
-            "UNLINKED"
-        },
-        "nebula_link",
-    );
 }
 
 fn draw_nebula_channel(
@@ -603,11 +573,6 @@ fn draw_nebula_delay(
     let painter = ui.painter().clone();
     let params = state.params.clone();
     let synced = params.tempo_sync.value();
-    let delay = if ch == Channel::Left {
-        &params.delay_time_l
-    } else {
-        &params.delay_time_r
-    };
     let note = if ch == Channel::Left {
         &params.note_l
     } else {
@@ -619,25 +584,12 @@ fn draw_nebula_delay(
         &params.deviation_r
     };
 
-    let value = if synced {
-        format!("{:.0} ms", synced_delay_ms(note.value(), deviation.value()))
-    } else {
-        format!("{:.0} ms", delay.value() * 1000.0)
-    };
-
     painter.text(
-        c.pos(cx, cy - 68.0),
+        c.pos(cx, cy - 60.0),
         Align2::CENTER_CENTER,
         "DELAY TIME",
         c.font(10.0),
         TEXT_SEC,
-    );
-    painter.text(
-        c.pos(cx, cy - 51.0),
-        Align2::CENTER_CENTER,
-        value,
-        c.font(14.0),
-        ACCENT,
     );
     let delay_r = 36.0;
     logic_delay_knob(
@@ -652,9 +604,9 @@ fn draw_nebula_delay(
         &format!("{id}_delay"),
     );
 
-    let button_w = 32.0;
-    let button_h = 21.0;
-    let button_radius = delay_r + 20.0;
+    let button_w = 30.0;
+    let button_h = 19.0;
+    let button_radius = delay_r + 40.0;
     let halve_x = cx + ARC_START.cos() * button_radius;
     let halve_y = cy + ARC_START.sin() * button_radius;
     let double_x = cx + ARC_END.cos() * button_radius;
@@ -1807,6 +1759,7 @@ fn logic_float_knob(
         r,
         param.modulated_normalized_value(),
         accent,
+        true,
     );
     let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
     add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
@@ -1920,14 +1873,26 @@ fn logic_delay_knob(
     }
 
     if synced {
-        draw_logic_note_ring(ui.painter(), c, cx, cy, r + 9.0);
+        draw_logic_note_ring(ui.painter(), c, cx, cy, r + 8.0);
     }
     let norm = if synced {
         sync_knob_normalized(note.value(), dev.value())
     } else {
         norm
     };
-    draw_logic_knob_visual(ui.painter(), c, cx, cy, r, norm, LOGIC_MINT);
+    draw_logic_knob_visual(ui.painter(), c, cx, cy, r, norm, LOGIC_MINT, false);
+    let value = if synced {
+        format!("{:.0} ms", synced_delay_ms(note.value(), dev.value()))
+    } else {
+        format!("{:.0} ms", delay.value() * 1000.0)
+    };
+    ui.painter().text(
+        c.pos(cx, cy),
+        Align2::CENTER_CENTER,
+        value,
+        c.font(10.0),
+        TEXT_PRI,
+    );
     let resp = resp.on_hover_text(if synced {
         "Tempo-synced delay"
     } else {
@@ -1944,6 +1909,7 @@ fn draw_logic_knob_visual(
     r: f32,
     norm: f32,
     accent: Color32,
+    center_dot: bool,
 ) {
     let center = c.pos(cx, cy);
     let radius = r * c.s;
@@ -1983,7 +1949,9 @@ fn draw_logic_knob_visual(
     let p2 = center + vec2(angle.cos() * radius * 0.76, angle.sin() * radius * 0.76);
     painter.line_segment([p1, p2], Stroke::new(2.0 * c.s, TEXT_PRI));
     painter.circle_filled(p2, 2.4 * c.s, accent);
-    painter.circle_filled(center, 2.3 * c.s, TEXT_PRI);
+    if center_dot {
+        painter.circle_filled(center, 2.3 * c.s, TEXT_PRI);
+    }
 }
 
 fn draw_logic_note_ring(painter: &Painter, c: LogicCanvas, cx: f32, cy: f32, r: f32) {
