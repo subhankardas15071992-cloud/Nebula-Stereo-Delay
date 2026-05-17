@@ -51,6 +51,8 @@ pub mod parameters;
 pub mod preset;
 #[cfg(feature = "plugin")]
 pub mod state;
+#[cfg(all(feature = "plugin", feature = "gui", target_os = "windows"))]
+mod windows_editor;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Everything below requires the "plugin" feature (nih_plug, GUI, etc.)
@@ -175,7 +177,16 @@ impl Plugin for NebulaStereoDelay {
             )
         }
 
-        #[cfg(any(not(feature = "gui"), target_os = "windows"))]
+        #[cfg(all(feature = "gui", target_os = "windows"))]
+        {
+            windows_editor::create_editor(
+                self.params.clone(),
+                self.midi_runtime.clone(),
+                self.meters.clone(),
+            )
+        }
+
+        #[cfg(not(feature = "gui"))]
         {
             None
         }

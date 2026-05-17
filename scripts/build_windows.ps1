@@ -75,7 +75,7 @@ Write-Step "Building release binary for $Target..."
 
 Push-Location $ProjectRoot
 try {
-    cargo build --release --target $Target --no-default-features --features plugin
+    cargo build --release --target $Target --no-default-features --features plugin,gui
     if ($LASTEXITCODE -ne 0) {
         Write-ErrMsg "Build failed with exit code $LASTEXITCODE"
         Pop-Location
