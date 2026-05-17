@@ -143,6 +143,16 @@ struct EditorState {
     preset_name: String,
     /// Short status shown in the preset menu after save/load actions.
     preset_status: Option<String>,
+    /// Whether the preset manager panel is open.
+    preset_menu_open: bool,
+    /// Inline numeric edit state for painted value boxes.
+    value_edit: Option<ValueEditState>,
+}
+
+#[derive(Clone)]
+struct ValueEditState {
+    id: String,
+    text: String,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -169,6 +179,8 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
             preset_manager: PresetManager::new(),
             preset_name: "User Preset".to_string(),
             preset_status: None,
+            preset_menu_open: false,
+            value_edit: None,
         },
         |ctx, _state| {
             apply_dark_theme(ctx);
@@ -480,7 +492,7 @@ fn draw_nebula_channel(
         ch_knob_param!(params, ch, low_cut_l, low_cut_r),
         x + 48.0,
         386.0,
-        23.0,
+        20.0,
         "HPF",
         ORANGE,
     );
@@ -492,7 +504,7 @@ fn draw_nebula_channel(
         ch_knob_param!(params, ch, low_cut_slope_l, low_cut_slope_r),
         x + 124.0,
         386.0,
-        23.0,
+        20.0,
         "HPFS",
         ORANGE,
     );
@@ -504,7 +516,7 @@ fn draw_nebula_channel(
         ch_knob_param!(params, ch, high_cut_l, high_cut_r),
         x + 218.0,
         386.0,
-        23.0,
+        20.0,
         "LPF",
         ORANGE,
     );
@@ -516,7 +528,7 @@ fn draw_nebula_channel(
         ch_knob_param!(params, ch, high_cut_slope_l, high_cut_slope_r),
         x + 294.0,
         386.0,
-        23.0,
+        20.0,
         "LPFS",
         ORANGE,
     );
@@ -531,7 +543,7 @@ fn draw_nebula_channel(
         feedback,
         x + 88.0,
         500.0,
-        30.0,
+        25.0,
         "FEEDBACK",
         MAGENTA,
     );
@@ -563,7 +575,7 @@ fn draw_nebula_channel(
         cf,
         x + 254.0,
         500.0,
-        30.0,
+        25.0,
         cf_label,
         PURPLE,
     );
@@ -627,6 +639,7 @@ fn draw_nebula_delay(
         c.font(14.0),
         ACCENT,
     );
+    let delay_r = 36.0;
     logic_delay_knob(
         ui,
         state,
@@ -635,17 +648,29 @@ fn draw_nebula_delay(
         ch,
         cx,
         cy,
-        42.0,
+        delay_r,
         &format!("{id}_delay"),
     );
 
+    let button_w = 32.0;
+    let button_h = 21.0;
+    let button_radius = delay_r + 20.0;
+    let halve_x = cx + ARC_START.cos() * button_radius;
+    let halve_y = cy + ARC_START.sin() * button_radius;
+    let double_x = cx + ARC_END.cos() * button_radius;
+    let double_y = cy + ARC_END.sin() * button_radius;
     logic_delay_scale_button(
         ui,
         state,
         setter,
         c,
         ch,
-        c.rect(cx - 56.0, cy + 39.0, 34.0, 22.0),
+        c.rect(
+            halve_x - button_w * 0.5,
+            halve_y - button_h * 0.5,
+            button_w,
+            button_h,
+        ),
         0.5,
         ":2",
         &format!("{id}_halve"),
@@ -656,7 +681,12 @@ fn draw_nebula_delay(
         setter,
         c,
         ch,
-        c.rect(cx + 22.0, cy + 39.0, 34.0, 22.0),
+        c.rect(
+            double_x - button_w * 0.5,
+            double_y - button_h * 0.5,
+            button_w,
+            button_h,
+        ),
         2.0,
         "x2",
         &format!("{id}_double"),
@@ -776,9 +806,9 @@ fn draw_nebula_global(
         setter,
         c,
         &params.output_mix_l,
-        x + 42.0,
+        x + 36.0,
         454.0,
-        28.0,
+        22.0,
         "LEFT",
         ACCENT,
     );
@@ -788,9 +818,9 @@ fn draw_nebula_global(
         setter,
         c,
         &params.output_mix_r,
-        x + 102.0,
+        x + 108.0,
         454.0,
-        28.0,
+        22.0,
         "RIGHT",
         ACCENT,
     );
@@ -808,8 +838,7 @@ fn nebula_knob_cell(
     label: &str,
     accent: Color32,
 ) {
-    let painter = ui.painter().clone();
-    painter.text(
+    ui.painter().text(
         c.pos(cx, cy - r - 18.0),
         Align2::CENTER_CENTER,
         label,
@@ -829,12 +858,14 @@ fn nebula_knob_cell(
         &format!("nebula_{}", param_id_for(param.name())),
     );
     let box_w = if r <= 28.0 { 58.0 } else { 72.0 };
-    nebula_value_box(
-        &painter,
+    nebula_float_value_editor(
+        ui,
+        state,
+        setter,
         c,
-        c.rect(cx - box_w * 0.5, cy + r + 8.0, box_w, 19.0),
-        &param.to_string(),
-        true,
+        c.rect(cx - box_w * 0.5, cy + r + 11.0, box_w, 19.0),
+        param,
+        &format!("nebula_value_{}", param_id_for(param.name())),
     );
 }
 
@@ -868,6 +899,86 @@ fn nebula_value_box(painter: &Painter, c: LogicCanvas, rect: Rect, text: &str, e
         c.font(9.0),
         if enabled { TEXT_PRI } else { TEXT_SEC },
     );
+}
+
+fn nebula_float_value_editor(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::FloatParam,
+    id: &str,
+) {
+    let text_id = ui.id().with(format!("{id}_text"));
+    let editing = state.value_edit.as_ref().is_some_and(|edit| edit.id == id);
+
+    let fill = if editing {
+        Color32::from_rgb(0x14, 0x1C, 0x34)
+    } else {
+        INSET_BG
+    };
+    ui.painter()
+        .rect_filled(rect, corner_radius(3.0 * c.s), fill);
+    ui.painter().rect_stroke(
+        rect,
+        corner_radius(3.0 * c.s),
+        Stroke::new(1.0 * c.s, if editing { ACCENT } else { BORDER }),
+        egui::StrokeKind::Outside,
+    );
+
+    if editing {
+        let mut text = state
+            .value_edit
+            .as_ref()
+            .map(|edit| edit.text.clone())
+            .unwrap_or_else(|| param.to_string());
+        let resp = ui.put(
+            rect.shrink(2.0 * c.s),
+            egui::TextEdit::singleline(&mut text)
+                .id(text_id)
+                .desired_width(rect.width())
+                .font(egui::TextStyle::Small),
+        );
+        if let Some(edit) = state.value_edit.as_mut().filter(|edit| edit.id == id) {
+            edit.text = text.clone();
+        }
+
+        let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let commit = ui.input(|i| i.key_pressed(egui::Key::Enter)) || resp.lost_focus();
+        if cancel || (commit && commit_float_text_value(ui, state, setter, param, &text)) {
+            state.value_edit = None;
+        }
+        let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
+        add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+        return;
+    }
+
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        param.to_string(),
+        c.font(9.0),
+        TEXT_PRI,
+    );
+
+    if resp.double_clicked() {
+        state.value_edit = Some(ValueEditState {
+            id: id.to_string(),
+            text: param.to_string(),
+        });
+        ui.memory_mut(|m| m.request_focus(text_id));
+    } else {
+        logic_float_field_interaction(ui, state, setter, param, &resp, 28.0);
+    }
+
+    let resp = resp.on_hover_text(format!(
+        "{}: {} (double-click to type a value)",
+        param.name(),
+        param
+    ));
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
 }
 
 fn nebula_deviation_input(
@@ -1685,7 +1796,7 @@ fn logic_float_knob(
     accent: Color32,
     id: &str,
 ) {
-    let rect = Rect::from_center_size(c.pos(cx, cy), vec2((r * 2.4) * c.s, (r * 2.4) * c.s));
+    let rect = Rect::from_center_size(c.pos(cx, cy), vec2((r * 2.25) * c.s, (r * 2.25) * c.s));
     let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     logic_float_interaction(ui, state, setter, param, &resp, r);
     draw_logic_knob_visual(
@@ -1729,7 +1840,7 @@ fn logic_delay_knob(
     } else {
         &params.deviation_r
     };
-    let rect = Rect::from_center_size(c.pos(cx, cy), vec2((r * 2.8) * c.s, (r * 2.8) * c.s));
+    let rect = Rect::from_center_size(c.pos(cx, cy), vec2((r * 2.55) * c.s, (r * 2.55) * c.s));
     let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     let norm = if synced {
         sync_knob_normalized(note.value(), dev.value())
@@ -1809,7 +1920,7 @@ fn logic_delay_knob(
     }
 
     if synced {
-        draw_logic_note_ring(ui.painter(), c, cx, cy, r + 14.0);
+        draw_logic_note_ring(ui.painter(), c, cx, cy, r + 9.0);
     }
     let norm = if synced {
         sync_knob_normalized(note.value(), dev.value())
@@ -1919,7 +2030,8 @@ fn logic_float_interaction(
         }
     }
     if resp.dragged() {
-        let delta = -ui.input(|i| i.pointer.delta().y) / ((radius * 2.7).max(1.0) * 1.0);
+        let raw_delta = -ui.input(|i| i.pointer.delta().y) / ((radius * 2.7).max(1.0) * 1.0);
+        let delta = knob_drag_delta(param, raw_delta);
         logic_set_float_norm_relative(
             ui,
             state,
@@ -1943,6 +2055,98 @@ fn logic_float_interaction(
         setter.set_parameter(param, param.default_plain_value());
         setter.end_set_parameter(param);
     }
+}
+
+fn logic_float_field_interaction(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::FloatParam,
+    resp: &Response,
+    radius: f32,
+) {
+    let link = stereo_link_active(ui, &state.params);
+    if resp.drag_started() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        if link {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.begin_set_parameter(other);
+            }
+        }
+    }
+    if resp.dragged() {
+        let raw_delta = -ui.input(|i| i.pointer.delta().y) / ((radius * 2.7).max(1.0) * 1.0);
+        let delta = knob_drag_delta(param, raw_delta);
+        logic_set_float_norm_relative(
+            ui,
+            state,
+            setter,
+            param,
+            (param.modulated_normalized_value() + delta).clamp(0.0, 1.0),
+            delta,
+        );
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(param);
+        if link {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.end_set_parameter(other);
+            }
+        }
+    }
+}
+
+fn commit_float_text_value(
+    ui: &Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::FloatParam,
+    text: &str,
+) -> bool {
+    let Some(next_norm) = param.string_to_normalized_value(text) else {
+        state.preset_status = Some(format!("Invalid value for {}", param.name()));
+        return false;
+    };
+
+    let next_norm = next_norm.clamp(0.0, 1.0);
+    let current_norm = param.modulated_normalized_value();
+    let link = stereo_link_active(ui, &state.params);
+
+    state.params.push_undo();
+    setter.begin_set_parameter(param);
+    if link {
+        if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+            setter.begin_set_parameter(other);
+        }
+    }
+    logic_set_float_norm_relative(
+        ui,
+        state,
+        setter,
+        param,
+        next_norm,
+        next_norm - current_norm,
+    );
+    if link {
+        if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+            setter.end_set_parameter(other);
+        }
+    }
+    setter.end_set_parameter(param);
+    true
+}
+
+fn knob_drag_delta(param: &nih_plug::params::FloatParam, raw_delta: f32) -> f32 {
+    if is_lpf_cut_param(param.name()) {
+        -raw_delta
+    } else {
+        raw_delta
+    }
+}
+
+fn is_lpf_cut_param(name: &str) -> bool {
+    name == "High Cut L" || name == "High Cut R"
 }
 
 fn logic_set_float_norm_relative(
@@ -2214,94 +2418,99 @@ fn logic_preset_button(
     rect: Rect,
 ) {
     let resp = logic_button(ui, c, rect, "Preset", false, "logic_preset");
-    let popup_id = ui.id().with("logic_preset_popup");
     if resp.clicked() {
-        ui.memory_mut(|m| m.toggle_popup(popup_id));
+        state.preset_menu_open = !state.preset_menu_open;
     }
-    egui::popup::popup_above_or_below_widget(
-        ui,
-        popup_id,
-        &resp,
-        egui::AboveOrBelow::Below,
-        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-        |ui| {
+    if state.preset_menu_open {
+        draw_preset_panel(
+            ui,
+            state,
+            setter,
+            c,
+            rect.left_bottom() + vec2(0.0, 6.0 * c.s),
+        );
+    }
+}
+
+fn draw_preset_panel(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    pos: Pos2,
+) {
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        state.preset_menu_open = false;
+    }
+
+    egui::Area::new(ui.id().with("nebula_preset_panel"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(ui.ctx(), |ui| {
             Frame::NONE
                 .fill(PANEL_BG)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0 * c.s, BORDER))
+                .corner_radius(corner_radius(6.0 * c.s))
                 .show(ui, |ui| {
-                    ui.set_min_width(240.0 * c.s);
-                    ui.label(rich("Save", 10.0 * c.s).color(ACCENT).strong());
+                    ui.set_min_width(286.0 * c.s);
+                    ui.set_max_width(286.0 * c.s);
+
+                    ui.horizontal(|ui| {
+                        ui.label(rich("Preset", 11.0 * c.s).color(ACCENT).strong());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .add(Button::new(rich("Close", 9.0 * c.s).color(TEXT_SEC)))
+                                .clicked()
+                            {
+                                state.preset_menu_open = false;
+                            }
+                        });
+                    });
+
+                    ui.add_space(4.0 * c.s);
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut state.preset_name)
-                                .desired_width(130.0 * c.s)
+                                .desired_width(174.0 * c.s)
                                 .font(egui::TextStyle::Small),
                         );
-                        if ui.button("Current").clicked() {
-                            let values = preset_values_from_params(&state.params);
-                            state.preset_status = match state.preset_manager.save_user_preset(
-                                &state.preset_name,
-                                "Nebula User",
-                                &values,
-                            ) {
-                                Ok(()) => Some(format!("Saved {}", state.preset_name)),
-                                Err(err) => Some(err),
-                            };
+                        if ui
+                            .add(Button::new(rich("Save", 9.0 * c.s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            save_named_preset(state, None);
                         }
                     });
                     ui.horizontal(|ui| {
-                        if ui.button("Save A").clicked() {
-                            if let Ok(snapshots) = state.params.ab_snapshots.read() {
-                                let values = preset_values_from_snapshot(&snapshots.a);
-                                state.preset_status = match state.preset_manager.save_user_preset(
-                                    &format!("{} A", state.preset_name),
-                                    "Nebula User",
-                                    &values,
-                                ) {
-                                    Ok(()) => Some(format!("Saved {} A", state.preset_name)),
-                                    Err(err) => Some(err),
-                                };
-                            }
+                        if ui
+                            .add(Button::new(rich("Save A", 9.0 * c.s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            save_named_preset(state, Some(0));
                         }
-                        if ui.button("Save B").clicked() {
-                            if let Ok(snapshots) = state.params.ab_snapshots.read() {
-                                let values = preset_values_from_snapshot(&snapshots.b);
-                                state.preset_status = match state.preset_manager.save_user_preset(
-                                    &format!("{} B", state.preset_name),
-                                    "Nebula User",
-                                    &values,
-                                ) {
-                                    Ok(()) => Some(format!("Saved {} B", state.preset_name)),
-                                    Err(err) => Some(err),
-                                };
-                            }
+                        if ui
+                            .add(Button::new(rich("Save B", 9.0 * c.s).color(TEXT_PRI)))
+                            .clicked()
+                        {
+                            save_named_preset(state, Some(1));
                         }
                     });
+
                     if let Some(status) = &state.preset_status {
-                        ui.label(rich(status, 9.0 * c.s).color(TEXT_SEC));
+                        ui.label(rich(status, 8.5 * c.s).color(TEXT_SEC));
                     }
+
                     ui.separator();
                     ui.label(rich("Factory", 10.0 * c.s).color(ACCENT).strong());
-                    let factory = state.preset_manager.factory_presets().to_vec();
-                    for preset in factory {
-                        if ui.button(&preset.name).clicked() {
-                            state.params.push_undo();
-                            state
-                                .preset_manager
-                                .load_preset(&preset, &state.params, setter);
-                            state.preset_status = Some(format!("Loaded {}", preset.name));
-                            ui.memory_mut(|m| m.close_popup());
-                        }
-                    }
-                    ui.separator();
-                    ui.label(rich("User", 10.0 * c.s).color(ACCENT).strong());
-                    match state.preset_manager.user_presets() {
-                        Ok(user_presets) if user_presets.is_empty() => {
-                            ui.label(rich("No user presets", 9.0 * c.s).color(TEXT_SEC));
-                        }
-                        Ok(user_presets) => {
-                            for preset in user_presets {
-                                if ui.button(&preset.name).clicked() {
+                    egui::ScrollArea::vertical()
+                        .max_height(148.0 * c.s)
+                        .show(ui, |ui| {
+                            let factory = state.preset_manager.factory_presets().to_vec();
+                            for preset in factory {
+                                if ui
+                                    .add(Button::new(rich(&preset.name, 9.0 * c.s).color(TEXT_PRI)))
+                                    .clicked()
+                                {
                                     state.params.push_undo();
                                     state.preset_manager.load_preset(
                                         &preset,
@@ -2309,17 +2518,113 @@ fn logic_preset_button(
                                         setter,
                                     );
                                     state.preset_status = Some(format!("Loaded {}", preset.name));
-                                    ui.memory_mut(|m| m.close_popup());
+                                    state.preset_menu_open = false;
                                 }
                             }
-                        }
-                        Err(err) => {
-                            ui.label(rich(err, 9.0 * c.s).color(DANGER));
-                        }
-                    }
+                        });
+
+                    ui.separator();
+                    ui.label(rich("User", 10.0 * c.s).color(ACCENT).strong());
+                    egui::ScrollArea::vertical()
+                        .max_height(128.0 * c.s)
+                        .show(ui, |ui| match state.preset_manager.user_presets() {
+                            Ok(user_presets) if user_presets.is_empty() => {
+                                ui.label(rich("No user presets", 8.5 * c.s).color(TEXT_SEC));
+                            }
+                            Ok(user_presets) => {
+                                for preset in user_presets {
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add(Button::new(
+                                                rich(&preset.name, 9.0 * c.s).color(TEXT_PRI),
+                                            ))
+                                            .clicked()
+                                        {
+                                            state.params.push_undo();
+                                            state.preset_manager.load_preset(
+                                                &preset,
+                                                &state.params,
+                                                setter,
+                                            );
+                                            state.preset_status =
+                                                Some(format!("Loaded {}", preset.name));
+                                            state.preset_menu_open = false;
+                                        }
+                                        if ui
+                                            .add(Button::new(
+                                                rich("Delete", 8.0 * c.s).color(TEXT_SEC),
+                                            ))
+                                            .clicked()
+                                        {
+                                            state.preset_status = match state
+                                                .preset_manager
+                                                .delete_user_preset(&preset.name)
+                                            {
+                                                Ok(()) => Some(format!("Deleted {}", preset.name)),
+                                                Err(err) => Some(err),
+                                            };
+                                        }
+                                    });
+                                }
+                            }
+                            Err(err) => {
+                                ui.label(rich(err, 8.5 * c.s).color(DANGER));
+                            }
+                        });
                 });
+        });
+}
+
+fn save_named_preset(state: &mut EditorState, ab_slot: Option<u8>) {
+    let base_name = state.preset_name.trim().to_string();
+    if base_name.is_empty() {
+        state.preset_status = Some("Preset name cannot be empty".to_string());
+        return;
+    }
+
+    match ab_slot {
+        None => {
+            let values = preset_values_from_params(&state.params);
+            state.preset_status =
+                match state
+                    .preset_manager
+                    .save_user_preset(&base_name, "Nebula User", &values)
+                {
+                    Ok(()) => Some(format!("Saved {base_name}")),
+                    Err(err) => Some(err),
+                };
+        }
+        Some(0) => match state.params.ab_snapshots.read() {
+            Ok(snapshots) => {
+                let name = format!("{base_name} A");
+                let values = preset_values_from_snapshot(&snapshots.a);
+                state.preset_status =
+                    match state
+                        .preset_manager
+                        .save_user_preset(&name, "Nebula User", &values)
+                    {
+                        Ok(()) => Some(format!("Saved {name}")),
+                        Err(err) => Some(err),
+                    };
+            }
+            Err(_) => state.preset_status = Some("Could not read A/B state".to_string()),
         },
-    );
+        Some(_) => match state.params.ab_snapshots.read() {
+            Ok(snapshots) => {
+                let name = format!("{base_name} B");
+                let values = preset_values_from_snapshot(&snapshots.b);
+                state.preset_status =
+                    match state
+                        .preset_manager
+                        .save_user_preset(&name, "Nebula User", &values)
+                    {
+                        Ok(()) => Some(format!("Saved {name}")),
+                        Err(err) => Some(err),
+                    };
+            }
+            Err(_) => state.preset_status = Some("Could not read A/B state".to_string()),
+        },
+    }
 }
 
 fn logic_ab_button(
