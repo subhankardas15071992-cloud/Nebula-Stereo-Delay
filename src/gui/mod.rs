@@ -2682,7 +2682,9 @@ fn logic_set_sync_norm(
     } else {
         (&params.note_r, &params.deviation_r)
     };
+    let old_ms = synced_delay_ms(note.value(), dev.value());
     let (next_note, next_dev) = sync_from_norm(norm);
+    let next_ms = synced_delay_ms(next_note, next_dev);
     setter.set_parameter(note, next_note);
     setter.set_parameter(dev, next_dev);
     if link && stereo_link_active(ui, &state.params) {
@@ -2691,9 +2693,9 @@ fn logic_set_sync_norm(
         } else {
             (&params.note_l, &params.deviation_l)
         };
-        let other_norm = (sync_knob_normalized(other_note.value(), other_dev.value()) + delta_norm)
-            .clamp(0.0, 1.0);
-        let (on, od) = sync_from_norm(other_norm);
+        let ratio = sync_ratio(old_ms, next_ms, delta_norm);
+        let target_ms = synced_delay_ms(other_note.value(), other_dev.value()) * ratio;
+        let (on, od) = sync_from_ms(target_ms);
         setter.set_parameter(other_note, on);
         setter.set_parameter(other_dev, od);
     }
@@ -2714,7 +2716,9 @@ fn logic_set_note_preserve_offset(
     } else {
         (&params.note_r, &params.deviation_r)
     };
-    let delta = note_index(value) as isize - note_index(note.value()) as isize;
+    let old_ms = synced_delay_ms(note.value(), dev.value());
+    let new_dev = if reset_deviation { 0.0 } else { dev.value() };
+    let new_ms = synced_delay_ms(value, new_dev);
     setter.begin_set_parameter(note);
     setter.set_parameter(note, value);
     setter.end_set_parameter(note);
@@ -2729,16 +2733,15 @@ fn logic_set_note_preserve_offset(
         } else {
             (&params.note_l, &params.deviation_l)
         };
-        let idx = (note_index(other_note.value()) as isize + delta)
-            .clamp(0, (note_variants().len() - 1) as isize) as usize;
+        let ratio = sync_ratio(old_ms, new_ms, 0.0);
+        let target_ms = synced_delay_ms(other_note.value(), other_dev.value()) * ratio;
+        let (other_value, other_deviation) = sync_from_ms(target_ms);
         setter.begin_set_parameter(other_note);
-        setter.set_parameter(other_note, note_variants()[idx].0);
+        setter.set_parameter(other_note, other_value);
         setter.end_set_parameter(other_note);
-        if reset_deviation {
-            setter.begin_set_parameter(other_dev);
-            setter.set_parameter(other_dev, 0.0);
-            setter.end_set_parameter(other_dev);
-        }
+        setter.begin_set_parameter(other_dev);
+        setter.set_parameter(other_dev, other_deviation);
+        setter.end_set_parameter(other_dev);
     }
 }
 
@@ -2752,26 +2755,64 @@ fn logic_set_note_absolute(
     reset_other_relative: bool,
 ) {
     let link = stereo_link_active(ui, &state.params);
-    logic_set_note_preserve_offset(ui, state, setter, ch, note, reset_other_relative);
     let params = state.params.clone();
-    let dev = if ch == Channel::Left {
-        &params.deviation_l
+    let (note_param, dev) = if ch == Channel::Left {
+        (&params.note_l, &params.deviation_l)
     } else {
-        &params.deviation_r
+        (&params.note_r, &params.deviation_r)
     };
+    let old_ms = synced_delay_ms(note_param.value(), dev.value());
+    let new_ms = synced_delay_ms(note, deviation);
+    state.params.push_undo();
+    setter.begin_set_parameter(note_param);
+    setter.set_parameter(note_param, note);
+    setter.end_set_parameter(note_param);
     setter.begin_set_parameter(dev);
     setter.set_parameter(dev, deviation);
     setter.end_set_parameter(dev);
     if link && reset_other_relative {
-        let other_dev = if ch == Channel::Left {
-            &params.deviation_r
+        let (other_note, other_dev) = if ch == Channel::Left {
+            (&params.note_r, &params.deviation_r)
         } else {
-            &params.deviation_l
+            (&params.note_l, &params.deviation_l)
         };
+        let ratio = sync_ratio(old_ms, new_ms, 0.0);
+        let target_ms = synced_delay_ms(other_note.value(), other_dev.value()) * ratio;
+        let (on, od) = sync_from_ms(target_ms);
+        setter.begin_set_parameter(other_note);
+        setter.set_parameter(other_note, on);
+        setter.end_set_parameter(other_note);
         setter.begin_set_parameter(other_dev);
-        setter.set_parameter(other_dev, deviation);
+        setter.set_parameter(other_dev, od);
         setter.end_set_parameter(other_dev);
     }
+}
+
+fn sync_ratio(old_ms: f32, new_ms: f32, fallback_delta_norm: f32) -> f32 {
+    if old_ms > 0.000_001 && old_ms.is_finite() && new_ms.is_finite() {
+        (new_ms / old_ms).clamp(0.001, 1000.0)
+    } else {
+        let max = (note_variants().len() - 1) as f32;
+        2.0_f32.powf((fallback_delta_norm * max) / 4.0)
+    }
+}
+
+fn sync_from_ms(target_ms: f32) -> (NoteValueParam, f32) {
+    let target_ms = target_ms.clamp(5.0, 2000.0);
+    let mut best = (NoteValueParam::Quarter, 0.0_f32);
+    let mut best_error = f32::INFINITY;
+    for (variant, _) in note_variants() {
+        let base_ms = crate::dsp::NoteValue::from(variant).duration_seconds(120.0) as f32 * 1000.0;
+        let cents = 1200.0 * (target_ms / base_ms.max(0.000_001)).log2();
+        let deviation = cents.clamp(-100.0, 100.0);
+        let candidate_ms = synced_delay_ms(variant, deviation);
+        let error = (target_ms / candidate_ms.max(0.000_001)).ln().abs();
+        if error < best_error {
+            best_error = error;
+            best = (variant, deviation);
+        }
+    }
+    best
 }
 
 fn sync_from_norm(norm: f32) -> (NoteValueParam, f32) {
@@ -3947,6 +3988,9 @@ fn set_note_deviation(
     } else {
         &state.params.deviation_r
     };
+    let old_ms = synced_delay_ms(note_param.value(), deviation_param.value());
+    let next_deviation = deviation.clamp(-100.0, 100.0);
+    let next_ms = synced_delay_ms(note, next_deviation);
     if full_gesture {
         setter.begin_set_parameter(note_param);
         setter.begin_set_parameter(deviation_param);
@@ -3966,7 +4010,7 @@ fn set_note_deviation(
         }
     }
     setter.set_parameter(note_param, note);
-    setter.set_parameter(deviation_param, deviation.clamp(-100.0, 100.0));
+    setter.set_parameter(deviation_param, next_deviation);
     if link_active {
         let other_note = if ch == Channel::Left {
             &state.params.note_r
@@ -3978,8 +4022,11 @@ fn set_note_deviation(
         } else {
             &state.params.deviation_l
         };
-        setter.set_parameter(other_note, note);
-        setter.set_parameter(other_dev, deviation.clamp(-100.0, 100.0));
+        let ratio = sync_ratio(old_ms, next_ms, 0.0);
+        let target_ms = synced_delay_ms(other_note.value(), other_dev.value()) * ratio;
+        let (linked_note, linked_dev) = sync_from_ms(target_ms);
+        setter.set_parameter(other_note, linked_note);
+        setter.set_parameter(other_dev, linked_dev);
     }
     if full_gesture {
         setter.end_set_parameter(note_param);
@@ -4103,11 +4150,6 @@ fn draw_note_value_buttons(
     } else {
         &state.params.note_r
     };
-    let deviation_param = if ch == Channel::Left {
-        &state.params.deviation_l
-    } else {
-        &state.params.deviation_r
-    };
     let current = note_param.value().to_index();
 
     egui::Grid::new(if ch == Channel::Left {
@@ -4129,32 +4171,8 @@ fn draw_note_value_buttons(
             );
             if resp.clicked() {
                 state.params.push_undo();
-                setter.begin_set_parameter(note_param);
-                setter.set_parameter(note_param, variant);
-                setter.end_set_parameter(note_param);
-                if stereo_link_active(ui, &state.params) {
-                    let other_note = if ch == Channel::Left {
-                        &state.params.note_r
-                    } else {
-                        &state.params.note_l
-                    };
-                    setter.begin_set_parameter(other_note);
-                    setter.set_parameter(other_note, variant);
-                    setter.end_set_parameter(other_note);
-                }
-                setter.begin_set_parameter(deviation_param);
-                setter.set_parameter(deviation_param, 0.0);
-                setter.end_set_parameter(deviation_param);
-                if stereo_link_active(ui, &state.params) {
-                    let other_deviation = if ch == Channel::Left {
-                        &state.params.deviation_r
-                    } else {
-                        &state.params.deviation_l
-                    };
-                    setter.begin_set_parameter(other_deviation);
-                    setter.set_parameter(other_deviation, 0.0);
-                    setter.end_set_parameter(other_deviation);
-                }
+                let link_active = stereo_link_active(ui, &state.params);
+                set_note_deviation(state, setter, ch, variant, 0.0, true, link_active);
             }
             if idx % 6 == 5 {
                 ui.end_row();
@@ -4217,20 +4235,7 @@ fn draw_note_popup(
                         .fill(if sel { ACCENT_DIM } else { PANEL_BG })
                         .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
-                            state.params.push_undo();
-                            setter.begin_set_parameter(param);
-                            setter.set_parameter(param, variant);
-                            setter.end_set_parameter(param);
-                            if stereo_link_active(ui, &state.params) {
-                                let other = if ch == Channel::Left {
-                                    &state.params.note_r
-                                } else {
-                                    &state.params.note_l
-                                };
-                                setter.begin_set_parameter(other);
-                                setter.set_parameter(other, variant);
-                                setter.end_set_parameter(other);
-                            }
+                            logic_set_note_preserve_offset(ui, state, setter, ch, variant, false);
                             ui.memory_mut(|m| m.close_popup());
                         }
                     }
