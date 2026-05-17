@@ -1763,7 +1763,10 @@ fn groove_preservation_test() {
 #[test]
 fn golden_industry_standard_reference() {
     let duration_secs = 5.0;
-    let amplitude = 0.5;
+    // Keep this reference comparison below full scale so the plugin's
+    // always-on clipping protection does not intentionally diverge from the
+    // simple golden delay.
+    let amplitude = 0.35;
     let delay_time = 0.2;
     let feedback = 0.4;
     let mix = 0.5;

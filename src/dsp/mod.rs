@@ -60,9 +60,35 @@ const FILTER_STAGE_SLOPE_DB: f64 = 6.0;
 /// Enough one-pole stages to cover the 1–100 dB/oct slope range.
 const MAX_FILTER_STAGES: usize = 17;
 
+/// Final output ceiling used by the always-on safety limiter.
+const SAFETY_OUTPUT_CEILING: f64 = 1.0;
+
+/// Emergency rail for internal delay/filter state. This is intentionally far
+/// above any sane audio level, and only exists to prevent runaway feedback or
+/// non-finite values from poisoning the engine.
+const INTERNAL_SAMPLE_LIMIT: f64 = 1.0e6;
+
 #[inline]
 fn db_to_gain(db: f64) -> f64 {
     10.0f64.powf(db / 20.0)
+}
+
+#[inline]
+fn protect_output_sample(sample: f64) -> f64 {
+    if !sample.is_finite() {
+        return 0.0;
+    }
+
+    sample.clamp(-SAFETY_OUTPUT_CEILING, SAFETY_OUTPUT_CEILING)
+}
+
+#[inline]
+fn sanitize_internal_sample(sample: f64) -> f64 {
+    if sample.is_finite() {
+        sample.clamp(-INTERNAL_SAMPLE_LIMIT, INTERNAL_SAMPLE_LIMIT)
+    } else {
+        0.0
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -545,14 +571,14 @@ impl DelayLine {
         let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
         let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
 
-        ((c3 * frac + c2) * frac + c1) * frac + c0
+        sanitize_internal_sample(((c3 * frac + c2) * frac + c1) * frac + c0)
     }
 
     /// Write a sample at the current write position and advance the
     /// write pointer by one slot.
     #[inline]
     fn write_and_advance(&mut self, sample: f64) {
-        self.buffer[self.write_pos] = sample;
+        self.buffer[self.write_pos] = sanitize_internal_sample(sample);
         self.write_pos = (self.write_pos + 1) & self.mask;
     }
 
@@ -606,7 +632,12 @@ impl OnePoleLowPass {
 
     #[inline]
     fn process(&mut self, input: f64) -> f64 {
+        let input = sanitize_internal_sample(input);
+        if !self.z.is_finite() {
+            self.z = 0.0;
+        }
         self.z += self.a * (input - self.z);
+        self.z = sanitize_internal_sample(self.z);
         self.z
     }
 
@@ -1093,8 +1124,8 @@ impl DelayEngine {
         let out_l = input_l + (out_l - input_l) * s_bypass;
         let out_r = input_r + (out_r - input_r) * s_bypass;
 
-        let out_l = out_l * s_output_gain;
-        let out_r = out_r * s_output_gain;
+        let out_l = protect_output_sample(out_l * s_output_gain);
+        let out_r = protect_output_sample(out_r * s_output_gain);
 
         ProcessedFrame {
             output_l: out_l,
@@ -1484,15 +1515,82 @@ mod tests {
             output_meter_r: 0.0,
         };
         for _ in 0..1000 {
-            frame = engine.process_frame(0.25, -0.5, &params);
+            frame = engine.process_frame(0.25, -0.25, &params);
         }
 
         let input_gain = db_to_gain(params.input_level_db);
         let output_gain = db_to_gain(params.output_level_db);
         assert!((frame.input_meter_l - 0.25 * input_gain).abs() < 1e-6);
-        assert!((frame.input_meter_r - -0.5 * input_gain).abs() < 1e-6);
+        assert!((frame.input_meter_r - -0.25 * input_gain).abs() < 1e-6);
         assert!((frame.output_meter_l - frame.input_meter_l * output_gain).abs() < 1e-6);
         assert!((frame.output_meter_r - frame.input_meter_r * output_gain).abs() < 1e-6);
+    }
+
+    #[test]
+    fn output_protection_is_transparent_at_and_below_full_scale() {
+        assert_eq!(protect_output_sample(0.25), 0.25);
+        assert_eq!(protect_output_sample(-0.75), -0.75);
+        assert_eq!(protect_output_sample(1.0), 1.0);
+        assert_eq!(protect_output_sample(-1.0), -1.0);
+    }
+
+    #[test]
+    fn output_protection_catches_extreme_boosts() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            input_level_db: 50.0,
+            output_level_db: 50.0,
+            output_mix_l: 0.0,
+            output_mix_r: 0.0,
+            ..DelayParams::default()
+        };
+
+        let mut out_l = 0.0;
+        let mut out_r = 0.0;
+        for _ in 0..1000 {
+            (out_l, out_r) = engine.process(1.0, -1.0, &params);
+        }
+
+        assert!(out_l.is_finite());
+        assert!(out_r.is_finite());
+        assert!(out_l.abs() <= SAFETY_OUTPUT_CEILING);
+        assert!(out_r.abs() <= SAFETY_OUTPUT_CEILING);
+    }
+
+    #[test]
+    fn output_protection_sanitizes_non_finite_samples() {
+        assert_eq!(protect_output_sample(f64::NAN), 0.0);
+        assert_eq!(protect_output_sample(f64::INFINITY), 0.0);
+        assert_eq!(protect_output_sample(f64::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn runaway_feedback_cannot_escape_output_protection() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            input_level_db: 50.0,
+            output_level_db: 50.0,
+            delay_time_l: 0.005,
+            delay_time_r: 0.005,
+            feedback_l: 1.0,
+            feedback_r: 1.0,
+            crossfeed_lr: 1.0,
+            crossfeed_rl: 1.0,
+            routing: RoutingMode::Customized,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
+            ..DelayParams::default()
+        };
+
+        let mut max_output = 0.0_f64;
+        for _ in 0..20_000 {
+            let (out_l, out_r) = engine.process(1.0, -1.0, &params);
+            assert!(out_l.is_finite());
+            assert!(out_r.is_finite());
+            max_output = max_output.max(out_l.abs()).max(out_r.abs());
+        }
+
+        assert!(max_output <= SAFETY_OUTPUT_CEILING);
     }
 
     #[test]
