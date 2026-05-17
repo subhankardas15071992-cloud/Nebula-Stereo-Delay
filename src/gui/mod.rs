@@ -51,6 +51,7 @@ use nih_plug_egui::egui::{
 };
 use nih_plug_egui::EguiState;
 
+use crate::midi::{sync_runtime_from_learn_state, MidiRuntime, MidiTarget, MIDI_TARGET_COUNT};
 use crate::parameters::{
     InputModeParam, NebulaStereoDelayParams, NoteValueParam, OversamplingParam, ParamSnapshot,
     RoutingModeParam,
@@ -132,6 +133,8 @@ const LOGIC_BUTTON_ON: Color32 = Color32::from_rgb(0x0F, 0x2A, 0x35);
 /// GUI-specific state that persists across frames and editor sessions.
 struct EditorState {
     params: Arc<NebulaStereoDelayParams>,
+    /// Lock-free MIDI runtime shared with the processor.
+    midi_runtime: Arc<MidiRuntime>,
     /// Shared reference to the `EguiState` for window-size coordination.
     egui_state: Arc<EguiState>,
     /// Whether a MIDI-learn listening session is active.
@@ -166,14 +169,22 @@ struct ValueEditState {
 /// `editor()` method. The window starts at 860 × 640 logical pixels and
 /// is freely resizable via the corner drag handle; all elements scale
 /// proportionally with the window size and system DPI.
-pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dyn Editor>> {
+pub fn create_egui_editor(
+    params: Arc<NebulaStereoDelayParams>,
+    midi_runtime: Arc<MidiRuntime>,
+) -> Option<Box<dyn Editor>> {
     let egui_state = EguiState::from_size(WIN_W, WIN_H);
     let egui_state_for_closure = egui_state.clone();
+
+    if let Ok(learn) = params.midi_learn.read() {
+        sync_runtime_from_learn_state(&midi_runtime, &learn);
+    }
 
     nih_plug_egui::create_egui_editor(
         egui_state,
         EditorState {
             params,
+            midi_runtime,
             egui_state: egui_state_for_closure,
             midi_learn_active: false,
             midi_learn_target: None,
@@ -187,6 +198,7 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
             apply_dark_theme(ctx);
         },
         |ctx, setter, state| {
+            drain_midi_runtime_to_gui(state, setter);
             // Use ResizableWindow so the user can drag the corner to resize.
             // The egui_state reference is shared with the EguiEditor wrapper
             // for window-size coordination.
@@ -215,6 +227,114 @@ fn draw_root(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
 
     ui.set_min_size(root_rect.size());
     draw_nebula_editor(ui, state, setter);
+}
+
+fn drain_midi_runtime_to_gui(state: &mut EditorState, setter: &ParamSetter<'_>) {
+    if let Some((target, channel, cc, normalized)) = state.midi_runtime.drain_learned_mapping() {
+        let param_id = state
+            .midi_learn_target
+            .take()
+            .unwrap_or_else(|| target.param_id().to_string());
+        state.midi_learn_active = false;
+
+        if let Ok(mut learn) = state.params.midi_learn.write() {
+            learn.assign_mapping(&param_id, channel, cc);
+            sync_runtime_from_learn_state(&state.midi_runtime, &learn);
+        }
+
+        state.midi_runtime.set_target_value(target, normalized);
+    }
+
+    for idx in 0..MIDI_TARGET_COUNT {
+        if let Some(target) = MidiTarget::from_index(idx) {
+            if let Some(normalized) = state.midi_runtime.consume_target_value(target) {
+                apply_midi_target_normalized(state, setter, target, normalized);
+            }
+        }
+    }
+}
+
+fn apply_midi_target_normalized(
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    target: MidiTarget,
+    normalized: f32,
+) {
+    let params = state.params.clone();
+
+    macro_rules! set_from_normalized {
+        ($param:expr) => {{
+            let value = $param.preview_plain(normalized);
+            setter.begin_set_parameter($param);
+            setter.set_parameter($param, value);
+            setter.end_set_parameter($param);
+        }};
+    }
+
+    match target {
+        MidiTarget::InputModeL => set_from_normalized!(&params.input_mode_l),
+        MidiTarget::InputModeR => set_from_normalized!(&params.input_mode_r),
+        MidiTarget::DelayTimeL => set_from_normalized!(&params.delay_time_l),
+        MidiTarget::DelayTimeR => set_from_normalized!(&params.delay_time_r),
+        MidiTarget::NoteL => set_from_normalized!(&params.note_l),
+        MidiTarget::NoteR => set_from_normalized!(&params.note_r),
+        MidiTarget::DeviationL => set_from_normalized!(&params.deviation_l),
+        MidiTarget::DeviationR => set_from_normalized!(&params.deviation_r),
+        MidiTarget::HalveL => set_from_normalized!(&params.halve_l),
+        MidiTarget::HalveR => set_from_normalized!(&params.halve_r),
+        MidiTarget::DoubleL => set_from_normalized!(&params.double_l),
+        MidiTarget::DoubleR => set_from_normalized!(&params.double_r),
+        MidiTarget::LowCutL => set_from_normalized!(&params.low_cut_l),
+        MidiTarget::LowCutR => set_from_normalized!(&params.low_cut_r),
+        MidiTarget::LowCutSlopeL => set_from_normalized!(&params.low_cut_slope_l),
+        MidiTarget::LowCutSlopeR => set_from_normalized!(&params.low_cut_slope_r),
+        MidiTarget::HighCutL => set_from_normalized!(&params.high_cut_l),
+        MidiTarget::HighCutR => set_from_normalized!(&params.high_cut_r),
+        MidiTarget::HighCutSlopeL => set_from_normalized!(&params.high_cut_slope_l),
+        MidiTarget::HighCutSlopeR => set_from_normalized!(&params.high_cut_slope_r),
+        MidiTarget::FeedbackL => set_from_normalized!(&params.feedback_l),
+        MidiTarget::FeedbackR => set_from_normalized!(&params.feedback_r),
+        MidiTarget::FeedbackPhaseL => set_from_normalized!(&params.feedback_phase_l),
+        MidiTarget::FeedbackPhaseR => set_from_normalized!(&params.feedback_phase_r),
+        MidiTarget::CrossfeedLr => set_from_normalized!(&params.crossfeed_lr),
+        MidiTarget::CrossfeedRl => set_from_normalized!(&params.crossfeed_rl),
+        MidiTarget::CrossfeedPhaseLr => set_from_normalized!(&params.crossfeed_phase_lr),
+        MidiTarget::CrossfeedPhaseRl => set_from_normalized!(&params.crossfeed_phase_rl),
+        MidiTarget::Routing => {
+            apply_routing_preset(state, setter, params.routing.preview_plain(normalized));
+        }
+        MidiTarget::TempoSync => set_from_normalized!(&params.tempo_sync),
+        MidiTarget::StereoLink => set_from_normalized!(&params.stereo_link),
+        MidiTarget::OutputMixL => set_from_normalized!(&params.output_mix_l),
+        MidiTarget::OutputMixR => set_from_normalized!(&params.output_mix_r),
+        MidiTarget::Oversampling => set_from_normalized!(&params.oversampling),
+        MidiTarget::Bypass => {
+            state
+                .params
+                .bypass
+                .store(normalized >= 0.5, Ordering::Relaxed);
+        }
+    }
+}
+
+fn begin_midi_learn_for_param(state: &mut EditorState, param_id: &str) {
+    if let Some(target) = MidiTarget::from_param_id(param_id) {
+        state.midi_runtime.start_learn(target);
+        if let Ok(mut learn) = state.params.midi_learn.write() {
+            learn.start_learn(param_id);
+        }
+        state.midi_learn_target = Some(param_id.to_string());
+        state.midi_learn_active = false;
+    }
+}
+
+fn stop_midi_learn(state: &mut EditorState) {
+    state.midi_learn_active = false;
+    state.midi_learn_target = None;
+    state.midi_runtime.stop_learn();
+    if let Ok(mut learn) = state.params.midi_learn.write() {
+        learn.stop_learn();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -399,6 +519,7 @@ fn draw_nebula_toolbar(
     if fx.clicked() {
         state.params.bypass.store(!bypassed, Ordering::Relaxed);
     }
+    add_midi_learn_menu(ui, &fx, "bypass", state);
 }
 
 fn draw_nebula_channel(
@@ -1190,6 +1311,7 @@ fn draw_logic_command_bar(
     if resp.clicked() {
         state.params.bypass.store(!bypassed, Ordering::Relaxed);
     }
+    add_midi_learn_menu(ui, &resp, "bypass", state);
 }
 
 fn draw_logic_channel(
@@ -2669,6 +2791,7 @@ fn logic_redo_button(
 
 fn logic_midi_button(ui: &mut Ui, state: &mut EditorState, c: LogicCanvas, rect: Rect) {
     let learning = state.midi_learn_active
+        || state.midi_runtime.is_learning()
         || state
             .params
             .midi_learn
@@ -2684,25 +2807,24 @@ fn logic_midi_button(ui: &mut Ui, state: &mut EditorState, c: LogicCanvas, rect:
         "logic_midi",
     );
     if resp.clicked() {
-        state.midi_learn_active = !state.midi_learn_active;
-        if !state.midi_learn_active {
-            state.midi_learn_target = None;
-            if let Ok(mut ml) = state.params.midi_learn.write() {
-                ml.stop_learn();
-            }
+        if learning {
+            stop_midi_learn(state);
+        } else {
+            state.midi_learn_active = true;
         }
     }
     resp.context_menu(|ui| {
         if let Ok(mut ml) = state.params.midi_learn.write() {
             if ui
                 .button(if ml.is_global_enabled() {
-                    "MIDI Off"
+                    "MIDI On/Off: On"
                 } else {
-                    "MIDI On"
+                    "MIDI On/Off: Off"
                 })
                 .clicked()
             {
                 ml.toggle_global_enabled();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                 ui.close_menu();
             }
             ui.separator();
@@ -2717,16 +2839,19 @@ fn logic_midi_button(ui: &mut Ui, state: &mut EditorState, c: LogicCanvas, rect:
                     .clicked()
                 {
                     ml.clean_up(&mapping.param_id);
+                    sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                     ui.close_menu();
                 }
             }
             if ui.button("Clear All").clicked() {
                 ml.clear_all();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                 ui.close_menu();
             }
             ui.separator();
             if ui.button("Roll Back").clicked() {
                 ml.roll_back();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                 ui.close_menu();
             }
             if ui.button("Save").clicked() {
@@ -3895,6 +4020,7 @@ fn draw_redo_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>,
 
 fn draw_midi_learn_btn(ui: &mut Ui, state: &mut EditorState, s: f32) {
     let learning = state.midi_learn_active
+        || state.midi_runtime.is_learning()
         || state
             .params
             .midi_learn
@@ -3926,12 +4052,10 @@ fn draw_midi_learn_btn(ui: &mut Ui, state: &mut EditorState, s: f32) {
     );
 
     if resp.clicked() {
-        state.midi_learn_active = !state.midi_learn_active;
-        if !state.midi_learn_active {
-            state.midi_learn_target = None;
-            if let Ok(mut ml) = state.params.midi_learn.write() {
-                ml.stop_learn();
-            }
+        if learning {
+            stop_midi_learn(state);
+        } else {
+            state.midi_learn_active = true;
         }
     }
 
@@ -3940,13 +4064,14 @@ fn draw_midi_learn_btn(ui: &mut Ui, state: &mut EditorState, s: f32) {
         if let Ok(mut ml) = state.params.midi_learn.write() {
             if ui
                 .button(if ml.is_global_enabled() {
-                    "MIDI Off"
+                    "MIDI On/Off: On"
                 } else {
-                    "MIDI On"
+                    "MIDI On/Off: Off"
                 })
                 .clicked()
             {
                 ml.toggle_global_enabled();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                 close = true;
             }
 
@@ -3960,17 +4085,20 @@ fn draw_midi_learn_btn(ui: &mut Ui, state: &mut EditorState, s: f32) {
                 );
                 if ui.button(label).clicked() {
                     ml.clean_up(&mapping.param_id);
+                    sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                     close = true;
                 }
             }
             if ui.button("Clear All").clicked() {
                 ml.clear_all();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                 close = true;
             }
 
             ui.separator();
             if ui.button("Roll Back").clicked() {
                 ml.roll_back();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
                 close = true;
             }
             if ui.button("Save").clicked() {
@@ -4003,6 +4131,7 @@ fn draw_bypass_btn(ui: &mut Ui, state: &mut EditorState, _setter: &ParamSetter<'
     if resp.clicked() {
         state.params.bypass.store(!bypassed, Ordering::Relaxed);
     }
+    add_midi_learn_menu(ui, &resp, "bypass", state);
     resp.on_hover_text(if bypassed {
         "Effect bypassed \u{2014} click to enable"
     } else {
@@ -5512,53 +5641,47 @@ fn draw_toggle_btn(
 /// Attach a right-click MIDI Learn context menu to a widget response.
 fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state: &mut EditorState) {
     if state.midi_learn_active && response.clicked() {
-        if let Ok(mut ml) = state.params.midi_learn.write() {
-            ml.start_learn(param_id);
-            state.midi_learn_target = Some(param_id.to_string());
-            state.midi_learn_active = false;
-        }
+        begin_midi_learn_for_param(state, param_id);
     }
 
     response.context_menu(|ui| {
         ui.label(rich("MIDI Learn", 11.0).color(ACCENT).strong());
         ui.separator();
 
-        // On / Off toggle
-        let is_active = state.midi_learn_active;
-        if ui
-            .button(if is_active {
-                "MIDI Learn: ON"
-            } else {
-                "MIDI Learn: OFF"
-            })
-            .clicked()
-        {
-            state.midi_learn_active = !is_active;
-            state.midi_learn_target = if !is_active {
-                Some(param_id.to_string())
-            } else {
-                None
-            };
+        if ui.button("Learn This Control").clicked() {
+            begin_midi_learn_for_param(state, param_id);
             ui.close_menu();
         }
 
-        // Clean Up
+        if ui.button("Cancel Learn").clicked() {
+            stop_midi_learn(state);
+            ui.close_menu();
+        }
+
+        if ui.button("MIDI On/Off").clicked() {
+            if let Ok(mut ml) = state.params.midi_learn.write() {
+                ml.toggle_midi(param_id);
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
+            }
+            ui.close_menu();
+        }
+
         if ui.button("Clean Up").clicked() {
             if let Ok(mut ml) = state.params.midi_learn.write() {
                 ml.clean_up(param_id);
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
             }
             ui.close_menu();
         }
 
-        // Roll Back
         if ui.button("Roll Back").clicked() {
             if let Ok(mut ml) = state.params.midi_learn.write() {
                 ml.roll_back();
+                sync_runtime_from_learn_state(&state.midi_runtime, &ml);
             }
             ui.close_menu();
         }
 
-        // Save
         if ui.button("Save").clicked() {
             if let Ok(mut ml) = state.params.midi_learn.write() {
                 ml.save_for_rollback();

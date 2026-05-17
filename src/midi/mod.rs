@@ -10,11 +10,13 @@
 //! The module is split into two core types that serve fundamentally different
 //! threading domains:
 //!
-//! - [`MidiCcValues`]: A **lock-free** store of the latest CC values, accessible
-//!   from both the audio thread (reader) and the MIDI input handler (writer).
-//!   Uses [`AtomicU32`] for values and [`AtomicBool`] for dirty flags, ensuring
-//!   zero allocation and zero locking on the audio path. This is the *only*
-//!   data structure the audio thread touches.
+//! - [`MidiRuntime`]: A **lock-free** runtime map of CC → target associations
+//!   and target values. The audio callback writes incoming CCs into this map
+//!   with atomics only, while the GUI drains dirty target values into real
+//!   plugin parameters so the host editor and custom controls stay in sync.
+//!
+//! - [`MidiCcValues`]: A lower-level lock-free CC value store used by the legacy
+//!   learning tests and kept as a small, reusable atomic primitive.
 //!
 //! - [`MidiLearnState`]: The learning/mapping configuration state, accessed
 //!   **only** from the GUI/main thread. Manages which parameters are mapped to
@@ -91,7 +93,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8, Ordering};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MidiMapping
@@ -125,6 +127,382 @@ pub struct MidiMapping {
 
 /// Total number of CC slots: 16 MIDI channels × 128 CC numbers.
 const CC_SLOT_COUNT: usize = 16 * 128; // 2048
+
+/// Number of MIDI-controllable plugin targets.
+pub const MIDI_TARGET_COUNT: usize = 35;
+
+const NO_TARGET: u16 = u16::MAX;
+
+/// Stable MIDI-controllable target IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+pub enum MidiTarget {
+    InputModeL,
+    InputModeR,
+    DelayTimeL,
+    DelayTimeR,
+    NoteL,
+    NoteR,
+    DeviationL,
+    DeviationR,
+    HalveL,
+    HalveR,
+    DoubleL,
+    DoubleR,
+    LowCutL,
+    LowCutR,
+    LowCutSlopeL,
+    LowCutSlopeR,
+    HighCutL,
+    HighCutR,
+    HighCutSlopeL,
+    HighCutSlopeR,
+    FeedbackL,
+    FeedbackR,
+    FeedbackPhaseL,
+    FeedbackPhaseR,
+    CrossfeedLr,
+    CrossfeedRl,
+    CrossfeedPhaseLr,
+    CrossfeedPhaseRl,
+    Routing,
+    TempoSync,
+    StereoLink,
+    OutputMixL,
+    OutputMixR,
+    Oversampling,
+    Bypass,
+}
+
+impl MidiTarget {
+    #[inline]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    #[inline]
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::InputModeL),
+            1 => Some(Self::InputModeR),
+            2 => Some(Self::DelayTimeL),
+            3 => Some(Self::DelayTimeR),
+            4 => Some(Self::NoteL),
+            5 => Some(Self::NoteR),
+            6 => Some(Self::DeviationL),
+            7 => Some(Self::DeviationR),
+            8 => Some(Self::HalveL),
+            9 => Some(Self::HalveR),
+            10 => Some(Self::DoubleL),
+            11 => Some(Self::DoubleR),
+            12 => Some(Self::LowCutL),
+            13 => Some(Self::LowCutR),
+            14 => Some(Self::LowCutSlopeL),
+            15 => Some(Self::LowCutSlopeR),
+            16 => Some(Self::HighCutL),
+            17 => Some(Self::HighCutR),
+            18 => Some(Self::HighCutSlopeL),
+            19 => Some(Self::HighCutSlopeR),
+            20 => Some(Self::FeedbackL),
+            21 => Some(Self::FeedbackR),
+            22 => Some(Self::FeedbackPhaseL),
+            23 => Some(Self::FeedbackPhaseR),
+            24 => Some(Self::CrossfeedLr),
+            25 => Some(Self::CrossfeedRl),
+            26 => Some(Self::CrossfeedPhaseLr),
+            27 => Some(Self::CrossfeedPhaseRl),
+            28 => Some(Self::Routing),
+            29 => Some(Self::TempoSync),
+            30 => Some(Self::StereoLink),
+            31 => Some(Self::OutputMixL),
+            32 => Some(Self::OutputMixR),
+            33 => Some(Self::Oversampling),
+            34 => Some(Self::Bypass),
+            _ => None,
+        }
+    }
+
+    pub fn from_param_id(param_id: &str) -> Option<Self> {
+        match param_id {
+            "input_mode_l" => Some(Self::InputModeL),
+            "input_mode_r" => Some(Self::InputModeR),
+            "delay_time_l" => Some(Self::DelayTimeL),
+            "delay_time_r" => Some(Self::DelayTimeR),
+            "note_l" => Some(Self::NoteL),
+            "note_r" => Some(Self::NoteR),
+            "deviation_l" => Some(Self::DeviationL),
+            "deviation_r" => Some(Self::DeviationR),
+            "halve_l" => Some(Self::HalveL),
+            "halve_r" => Some(Self::HalveR),
+            "double_l" => Some(Self::DoubleL),
+            "double_r" => Some(Self::DoubleR),
+            "low_cut_l" => Some(Self::LowCutL),
+            "low_cut_r" => Some(Self::LowCutR),
+            "low_cut_slope_l" => Some(Self::LowCutSlopeL),
+            "low_cut_slope_r" => Some(Self::LowCutSlopeR),
+            "high_cut_l" => Some(Self::HighCutL),
+            "high_cut_r" => Some(Self::HighCutR),
+            "high_cut_slope_l" => Some(Self::HighCutSlopeL),
+            "high_cut_slope_r" => Some(Self::HighCutSlopeR),
+            "feedback_l" => Some(Self::FeedbackL),
+            "feedback_r" => Some(Self::FeedbackR),
+            "feedback_phase_l" => Some(Self::FeedbackPhaseL),
+            "feedback_phase_r" => Some(Self::FeedbackPhaseR),
+            "crossfeed_l_r" => Some(Self::CrossfeedLr),
+            "crossfeed_r_l" => Some(Self::CrossfeedRl),
+            "crossfeed_phase" | "crossfeed_phase_l_r" => Some(Self::CrossfeedPhaseLr),
+            "crossfeed_phase_r_l" => Some(Self::CrossfeedPhaseRl),
+            "routing" => Some(Self::Routing),
+            "tempo_sync" => Some(Self::TempoSync),
+            "stereo_link" => Some(Self::StereoLink),
+            "output_mix_l" => Some(Self::OutputMixL),
+            "output_mix_r" => Some(Self::OutputMixR),
+            "oversampling" => Some(Self::Oversampling),
+            "bypass" | "fx_bypass" => Some(Self::Bypass),
+            _ => None,
+        }
+    }
+
+    pub fn param_id(self) -> &'static str {
+        match self {
+            Self::InputModeL => "input_mode_l",
+            Self::InputModeR => "input_mode_r",
+            Self::DelayTimeL => "delay_time_l",
+            Self::DelayTimeR => "delay_time_r",
+            Self::NoteL => "note_l",
+            Self::NoteR => "note_r",
+            Self::DeviationL => "deviation_l",
+            Self::DeviationR => "deviation_r",
+            Self::HalveL => "halve_l",
+            Self::HalveR => "halve_r",
+            Self::DoubleL => "double_l",
+            Self::DoubleR => "double_r",
+            Self::LowCutL => "low_cut_l",
+            Self::LowCutR => "low_cut_r",
+            Self::LowCutSlopeL => "low_cut_slope_l",
+            Self::LowCutSlopeR => "low_cut_slope_r",
+            Self::HighCutL => "high_cut_l",
+            Self::HighCutR => "high_cut_r",
+            Self::HighCutSlopeL => "high_cut_slope_l",
+            Self::HighCutSlopeR => "high_cut_slope_r",
+            Self::FeedbackL => "feedback_l",
+            Self::FeedbackR => "feedback_r",
+            Self::FeedbackPhaseL => "feedback_phase_l",
+            Self::FeedbackPhaseR => "feedback_phase_r",
+            Self::CrossfeedLr => "crossfeed_l_r",
+            Self::CrossfeedRl => "crossfeed_r_l",
+            Self::CrossfeedPhaseLr => "crossfeed_phase_l_r",
+            Self::CrossfeedPhaseRl => "crossfeed_phase_r_l",
+            Self::Routing => "routing",
+            Self::TempoSync => "tempo_sync",
+            Self::StereoLink => "stereo_link",
+            Self::OutputMixL => "output_mix_l",
+            Self::OutputMixR => "output_mix_r",
+            Self::Oversampling => "oversampling",
+            Self::Bypass => "bypass",
+        }
+    }
+}
+
+/// Lock-free MIDI mapping and value runtime shared by audio and GUI.
+pub struct MidiRuntime {
+    cc_targets: [AtomicU16; CC_SLOT_COUNT],
+    target_values: [AtomicU32; MIDI_TARGET_COUNT],
+    target_dirty: [AtomicBool; MIDI_TARGET_COUNT],
+    target_active: [AtomicBool; MIDI_TARGET_COUNT],
+    target_enabled: [AtomicBool; MIDI_TARGET_COUNT],
+    global_enabled: AtomicBool,
+    learning_target: AtomicU16,
+    learned_target: AtomicU16,
+    learned_channel: AtomicU8,
+    learned_cc: AtomicU8,
+    learned_value: AtomicU32,
+    learned_dirty: AtomicBool,
+}
+
+impl MidiRuntime {
+    pub fn new() -> Self {
+        Self {
+            cc_targets: std::array::from_fn(|_| AtomicU16::new(NO_TARGET)),
+            target_values: std::array::from_fn(|_| AtomicU32::new(0.0f32.to_bits())),
+            target_dirty: std::array::from_fn(|_| AtomicBool::new(false)),
+            target_active: std::array::from_fn(|_| AtomicBool::new(false)),
+            target_enabled: std::array::from_fn(|_| AtomicBool::new(false)),
+            global_enabled: AtomicBool::new(true),
+            learning_target: AtomicU16::new(NO_TARGET),
+            learned_target: AtomicU16::new(NO_TARGET),
+            learned_channel: AtomicU8::new(0),
+            learned_cc: AtomicU8::new(0),
+            learned_value: AtomicU32::new(0.0f32.to_bits()),
+            learned_dirty: AtomicBool::new(false),
+        }
+    }
+
+    #[inline]
+    fn index(channel: u8, cc: u8) -> usize {
+        MidiCcValues::index(channel, cc)
+    }
+
+    pub fn start_learn(&self, target: MidiTarget) {
+        self.learning_target.store(target as u16, Ordering::Release);
+    }
+
+    pub fn stop_learn(&self) {
+        self.learning_target.store(NO_TARGET, Ordering::Release);
+    }
+
+    pub fn is_learning(&self) -> bool {
+        self.learning_target.load(Ordering::Acquire) != NO_TARGET
+    }
+
+    pub fn set_global_enabled(&self, enabled: bool) {
+        self.global_enabled.store(enabled, Ordering::Release);
+        if !enabled {
+            self.clear_active_values();
+        }
+    }
+
+    pub fn clear_active_values(&self) {
+        for idx in 0..MIDI_TARGET_COUNT {
+            self.target_active[idx].store(false, Ordering::Release);
+            self.target_dirty[idx].store(false, Ordering::Release);
+        }
+    }
+
+    pub fn clear_mappings(&self) {
+        for slot in &self.cc_targets {
+            slot.store(NO_TARGET, Ordering::Release);
+        }
+        for idx in 0..MIDI_TARGET_COUNT {
+            self.target_enabled[idx].store(false, Ordering::Release);
+        }
+        self.clear_active_values();
+    }
+
+    pub fn set_mapping(&self, channel: u8, cc: u8, target: MidiTarget, enabled: bool) {
+        self.cc_targets[Self::index(channel, cc)].store(target as u16, Ordering::Release);
+        self.target_enabled[target.index()].store(enabled, Ordering::Release);
+    }
+
+    pub fn set_target_enabled(&self, target: MidiTarget, enabled: bool) {
+        self.target_enabled[target.index()].store(enabled, Ordering::Release);
+        if !enabled {
+            self.target_active[target.index()].store(false, Ordering::Release);
+            self.target_dirty[target.index()].store(false, Ordering::Release);
+        }
+    }
+
+    pub fn process_cc(&self, channel: u8, cc: u8, normalized: f32) -> Option<MidiTarget> {
+        let normalized = normalized.clamp(0.0, 1.0);
+        let learned = self.learning_target.swap(NO_TARGET, Ordering::AcqRel);
+        if learned != NO_TARGET {
+            if let Some(target) = MidiTarget::from_index(learned as usize) {
+                self.set_mapping(channel, cc, target, true);
+                self.set_target_value(target, normalized);
+                self.learned_channel.store(channel, Ordering::Release);
+                self.learned_cc.store(cc, Ordering::Release);
+                self.learned_value
+                    .store(normalized.to_bits(), Ordering::Release);
+                self.learned_target.store(learned, Ordering::Release);
+                self.learned_dirty.store(true, Ordering::Release);
+                return Some(target);
+            }
+        }
+
+        if !self.global_enabled.load(Ordering::Acquire) {
+            return None;
+        }
+
+        let target_idx = self.cc_targets[Self::index(channel, cc)].load(Ordering::Acquire);
+        let target = MidiTarget::from_index(target_idx as usize)?;
+        if !self.target_enabled[target.index()].load(Ordering::Acquire) {
+            return None;
+        }
+        self.set_target_value(target, normalized);
+        Some(target)
+    }
+
+    pub fn set_target_value(&self, target: MidiTarget, normalized: f32) {
+        let idx = target.index();
+        self.target_values[idx].store(normalized.clamp(0.0, 1.0).to_bits(), Ordering::Release);
+        self.target_active[idx].store(true, Ordering::Release);
+        self.target_dirty[idx].store(true, Ordering::Release);
+    }
+
+    pub fn target_value(&self, target: MidiTarget) -> Option<f32> {
+        let idx = target.index();
+        if self.global_enabled.load(Ordering::Acquire)
+            && self.target_active[idx].load(Ordering::Acquire)
+        {
+            Some(f32::from_bits(
+                self.target_values[idx].load(Ordering::Acquire),
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn consume_target_value(&self, target: MidiTarget) -> Option<f32> {
+        let idx = target.index();
+        if self.target_dirty[idx].swap(false, Ordering::AcqRel) {
+            self.target_value(target)
+        } else {
+            None
+        }
+    }
+
+    pub fn drain_learned_mapping(&self) -> Option<(MidiTarget, u8, u8, f32)> {
+        if self.learned_dirty.swap(false, Ordering::AcqRel) {
+            let target =
+                MidiTarget::from_index(self.learned_target.load(Ordering::Acquire) as usize)?;
+            let channel = self.learned_channel.load(Ordering::Acquire);
+            let cc = self.learned_cc.load(Ordering::Acquire);
+            let value = f32::from_bits(self.learned_value.load(Ordering::Acquire));
+            Some((target, channel, cc, value))
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for MidiRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Rebuild the lock-free runtime mapping from the persisted GUI learn state.
+pub fn sync_runtime_from_learn_state(runtime: &MidiRuntime, learn_state: &MidiLearnState) {
+    let mut preserved_values = [None; MIDI_TARGET_COUNT];
+    if learn_state.is_global_enabled() {
+        for mapping in learn_state.mappings() {
+            if learn_state.is_midi_enabled(&mapping.param_id) {
+                if let Some(target) = MidiTarget::from_param_id(&mapping.param_id) {
+                    preserved_values[target.index()] = runtime.target_value(target);
+                }
+            }
+        }
+    }
+
+    runtime.clear_mappings();
+    runtime.set_global_enabled(learn_state.is_global_enabled());
+
+    for mapping in learn_state.mappings() {
+        if let Some(target) = MidiTarget::from_param_id(&mapping.param_id) {
+            runtime.set_mapping(
+                mapping.channel,
+                mapping.cc,
+                target,
+                learn_state.is_midi_enabled(&mapping.param_id),
+            );
+            if learn_state.is_midi_enabled(&mapping.param_id) {
+                if let Some(value) = preserved_values[target.index()] {
+                    runtime.set_target_value(target, value);
+                }
+            }
+        }
+    }
+}
 
 /// Lock-free CC value store for audio thread access.
 ///
@@ -507,6 +885,24 @@ impl MidiLearnState {
         None
     }
 
+    /// Directly assign a CC mapping to a parameter.
+    ///
+    /// This is used by the GUI after the lock-free runtime captures the next
+    /// CC during learn mode. Keeping this on the GUI side avoids touching this
+    /// `Vec`-backed state from the audio callback.
+    pub fn assign_mapping(&mut self, param_id: &str, channel: u8, cc: u8) {
+        self.mappings
+            .retain(|m| !(m.channel == channel && m.cc == cc));
+        self.mappings.retain(|m| m.param_id != param_id);
+        self.mappings.push(MidiMapping {
+            cc,
+            channel,
+            param_id: param_id.to_string(),
+        });
+        self.disabled_params.remove(param_id);
+        self.stop_learn();
+    }
+
     /// Remove the mapping for the given parameter.
     ///
     /// This is the "Clean Up" context menu action. It removes the
@@ -753,6 +1149,83 @@ mod tests {
         assert_eq!(vals.get_and_clear(0, 1), None);
         assert_eq!(vals.get_and_clear(0, 2), None);
         assert_eq!(vals.get_and_clear(1, 1), None);
+    }
+
+    // ── MidiRuntime ───────────────────────────────────────────────────
+
+    #[test]
+    fn midi_target_count_matches_indices() {
+        assert_eq!(MidiTarget::Bypass.index() + 1, MIDI_TARGET_COUNT);
+    }
+
+    #[test]
+    fn runtime_learn_maps_cc_and_reports_dirty_target() {
+        let runtime = MidiRuntime::new();
+
+        runtime.start_learn(MidiTarget::FeedbackL);
+        assert!(runtime.is_learning());
+
+        assert_eq!(runtime.process_cc(0, 7, 0.5), Some(MidiTarget::FeedbackL));
+        assert!(!runtime.is_learning());
+        assert_eq!(
+            runtime.drain_learned_mapping(),
+            Some((MidiTarget::FeedbackL, 0, 7, 0.5))
+        );
+        assert_eq!(
+            runtime.consume_target_value(MidiTarget::FeedbackL),
+            Some(0.5)
+        );
+        assert_eq!(runtime.process_cc(0, 7, 0.75), Some(MidiTarget::FeedbackL));
+        assert_eq!(
+            runtime.consume_target_value(MidiTarget::FeedbackL),
+            Some(0.75)
+        );
+    }
+
+    #[test]
+    fn runtime_global_off_blocks_mapped_ccs() {
+        let runtime = MidiRuntime::new();
+
+        runtime.set_mapping(0, 7, MidiTarget::FeedbackL, true);
+        runtime.set_global_enabled(false);
+
+        assert_eq!(runtime.process_cc(0, 7, 1.0), None);
+        assert_eq!(runtime.consume_target_value(MidiTarget::FeedbackL), None);
+    }
+
+    #[test]
+    fn learn_state_sync_controls_runtime_enabled_state() {
+        let runtime = MidiRuntime::new();
+        let mut learn = MidiLearnState::new();
+
+        learn.assign_mapping("feedback_l", 0, 7);
+        sync_runtime_from_learn_state(&runtime, &learn);
+        assert_eq!(runtime.process_cc(0, 7, 1.0), Some(MidiTarget::FeedbackL));
+
+        learn.toggle_midi("feedback_l");
+        sync_runtime_from_learn_state(&runtime, &learn);
+        assert_eq!(runtime.process_cc(0, 7, 0.25), None);
+
+        learn.toggle_midi("feedback_l");
+        sync_runtime_from_learn_state(&runtime, &learn);
+        assert_eq!(runtime.process_cc(0, 7, 0.25), Some(MidiTarget::FeedbackL));
+    }
+
+    #[test]
+    fn learn_state_sync_preserves_active_mapped_values() {
+        let runtime = MidiRuntime::new();
+        let mut learn = MidiLearnState::new();
+
+        learn.assign_mapping("feedback_l", 0, 7);
+        sync_runtime_from_learn_state(&runtime, &learn);
+        runtime.process_cc(0, 7, 0.75);
+
+        sync_runtime_from_learn_state(&runtime, &learn);
+        assert_eq!(runtime.target_value(MidiTarget::FeedbackL), Some(0.75));
+
+        learn.clean_up("feedback_l");
+        sync_runtime_from_learn_state(&runtime, &learn);
+        assert_eq!(runtime.target_value(MidiTarget::FeedbackL), None);
     }
 
     // ── MidiLearnState — Learn Mode ────────────────────────────────────

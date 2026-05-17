@@ -13,7 +13,7 @@
 //! │  params: Arc<NebulaStereoDelayParams>  ◄── shared with GUI      │
 //! │  engine: DelayEngine                   ◄── f64 DSP core         │
 //! │  state_manager: StateManager           ◄── meters + spectrum    │
-//! │  midi_cc: MidiCcValues                 ◄── lock-free CC store   │
+//! │  midi_runtime: MidiRuntime             ◄── lock-free CC routing │
 //! │  preset_manager: PresetManager         ◄── factory + user banks │
 //! │  sample_rate: f64                      ◄── current host SR      │
 //! │                                                                  │
@@ -67,7 +67,7 @@ use nih_plug::prelude::*;
 #[cfg(feature = "plugin")]
 use crate::dsp::DelayEngine;
 #[cfg(feature = "plugin")]
-use crate::midi::MidiCcValues;
+use crate::midi::{sync_runtime_from_learn_state, MidiRuntime, MidiTarget};
 #[cfg(feature = "plugin")]
 use crate::parameters::NebulaStereoDelayParams;
 #[cfg(feature = "plugin")]
@@ -83,114 +83,6 @@ const DENORMAL_THRESHOLD_F32: f32 = 1e-30;
 const DEFAULT_TEMPO_BPM: f64 = 120.0;
 #[cfg(feature = "plugin")]
 const MAX_OVERSAMPLING_FACTOR: usize = 8;
-
-const MIDI_TARGET_COUNT: usize = 34;
-
-#[derive(Debug, Clone, Copy)]
-#[repr(usize)]
-enum MidiTarget {
-    InputModeL,
-    InputModeR,
-    DelayTimeL,
-    DelayTimeR,
-    NoteL,
-    NoteR,
-    DeviationL,
-    DeviationR,
-    HalveL,
-    HalveR,
-    DoubleL,
-    DoubleR,
-    LowCutL,
-    LowCutR,
-    LowCutSlopeL,
-    LowCutSlopeR,
-    HighCutL,
-    HighCutR,
-    HighCutSlopeL,
-    HighCutSlopeR,
-    FeedbackL,
-    FeedbackR,
-    FeedbackPhaseL,
-    FeedbackPhaseR,
-    CrossfeedLr,
-    CrossfeedRl,
-    CrossfeedPhaseLr,
-    CrossfeedPhaseRl,
-    Routing,
-    TempoSync,
-    StereoLink,
-    OutputMixL,
-    OutputMixR,
-    Oversampling,
-}
-
-impl MidiTarget {
-    fn from_param_id(param_id: &str) -> Option<Self> {
-        match param_id {
-            "input_mode_l" => Some(Self::InputModeL),
-            "input_mode_r" => Some(Self::InputModeR),
-            "delay_time_l" => Some(Self::DelayTimeL),
-            "delay_time_r" => Some(Self::DelayTimeR),
-            "note_l" => Some(Self::NoteL),
-            "note_r" => Some(Self::NoteR),
-            "deviation_l" => Some(Self::DeviationL),
-            "deviation_r" => Some(Self::DeviationR),
-            "halve_l" => Some(Self::HalveL),
-            "halve_r" => Some(Self::HalveR),
-            "double_l" => Some(Self::DoubleL),
-            "double_r" => Some(Self::DoubleR),
-            "low_cut_l" => Some(Self::LowCutL),
-            "low_cut_r" => Some(Self::LowCutR),
-            "low_cut_slope_l" => Some(Self::LowCutSlopeL),
-            "low_cut_slope_r" => Some(Self::LowCutSlopeR),
-            "high_cut_l" => Some(Self::HighCutL),
-            "high_cut_r" => Some(Self::HighCutR),
-            "high_cut_slope_l" => Some(Self::HighCutSlopeL),
-            "high_cut_slope_r" => Some(Self::HighCutSlopeR),
-            "feedback_l" => Some(Self::FeedbackL),
-            "feedback_r" => Some(Self::FeedbackR),
-            "feedback_phase_l" => Some(Self::FeedbackPhaseL),
-            "feedback_phase_r" => Some(Self::FeedbackPhaseR),
-            "crossfeed_l_r" => Some(Self::CrossfeedLr),
-            "crossfeed_r_l" => Some(Self::CrossfeedRl),
-            "crossfeed_phase" | "crossfeed_phase_l_r" => Some(Self::CrossfeedPhaseLr),
-            "crossfeed_phase_r_l" => Some(Self::CrossfeedPhaseRl),
-            "routing" => Some(Self::Routing),
-            "tempo_sync" => Some(Self::TempoSync),
-            "stereo_link" => Some(Self::StereoLink),
-            "output_mix_l" => Some(Self::OutputMixL),
-            "output_mix_r" => Some(Self::OutputMixR),
-            "oversampling" => Some(Self::Oversampling),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct MidiOverrides {
-    values: [Option<f32>; MIDI_TARGET_COUNT],
-}
-
-impl Default for MidiOverrides {
-    fn default() -> Self {
-        Self {
-            values: [None; MIDI_TARGET_COUNT],
-        }
-    }
-}
-
-impl MidiOverrides {
-    fn set_by_param_id(&mut self, param_id: &str, normalized: f32) {
-        if let Some(target) = MidiTarget::from_param_id(param_id) {
-            self.values[target as usize] = Some(normalized.clamp(0.0, 1.0));
-        }
-    }
-
-    fn get(&self, target: MidiTarget) -> Option<f32> {
-        self.values[target as usize]
-    }
-}
 
 #[cfg(feature = "plugin")]
 #[inline(always)]
@@ -217,8 +109,7 @@ pub struct NebulaStereoDelay {
     params: Arc<NebulaStereoDelayParams>,
     engine: DelayEngine,
     state_manager: StateManager,
-    midi_cc: MidiCcValues,
-    midi_overrides: MidiOverrides,
+    midi_runtime: Arc<MidiRuntime>,
     _preset_manager: PresetManager,
     sample_rate: f64,
     oversampling_factor: usize,
@@ -238,8 +129,7 @@ impl Default for NebulaStereoDelay {
             state_manager: StateManager::new(params.clone()),
             engine,
             params,
-            midi_cc: MidiCcValues::new(),
-            midi_overrides: MidiOverrides::default(),
+            midi_runtime: Arc::new(MidiRuntime::new()),
             _preset_manager: PresetManager::new(),
             sample_rate,
             oversampling_factor: 1,
@@ -275,7 +165,7 @@ impl Plugin for NebulaStereoDelay {
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         #[cfg(all(feature = "gui", not(target_os = "windows")))]
         {
-            gui::create_egui_editor(self.params.clone())
+            gui::create_egui_editor(self.params.clone(), self.midi_runtime.clone())
         }
 
         #[cfg(any(not(feature = "gui"), target_os = "windows"))]
@@ -299,6 +189,9 @@ impl Plugin for NebulaStereoDelay {
         self.prev_input_l = 0.0;
         self.prev_input_r = 0.0;
         self.state_manager = StateManager::new(self.params.clone());
+        if let Ok(learn) = self.params.midi_learn.read() {
+            sync_runtime_from_learn_state(&self.midi_runtime, &learn);
+        }
         true
     }
 
@@ -311,109 +204,100 @@ impl Plugin for NebulaStereoDelay {
         let transport = context.transport();
         let tempo_bpm = transport.tempo.unwrap_or(DEFAULT_TEMPO_BPM);
 
-        let soft_bypass = self.params.bypass.load(Ordering::Relaxed);
-        self.engine.set_bypass(soft_bypass);
-
         while let Some(event) = context.next_event() {
             if let NoteEvent::MidiCC {
                 channel, cc, value, ..
             } = event
             {
-                let mapped = self
-                    .params
-                    .midi_learn
-                    .try_write()
-                    .ok()
-                    .and_then(|mut learn| {
-                        learn.process_cc_event(channel, cc, value, &self.midi_cc)
-                    });
-
-                if let Some((param_id, normalized)) = mapped {
-                    self.midi_overrides.set_by_param_id(&param_id, normalized);
-                } else {
-                    self.midi_cc.set(channel, cc, value);
-                }
+                self.midi_runtime.process_cc(channel, cc, value);
             }
         }
 
+        let midi_bypass = self
+            .midi_runtime
+            .target_value(MidiTarget::Bypass)
+            .map(|v| v >= 0.5);
+        let soft_bypass = midi_bypass.unwrap_or_else(|| self.params.bypass.load(Ordering::Relaxed));
+        self.engine.set_bypass(soft_bypass);
+
         let input_mode_l = self
-            .midi_overrides
-            .get(MidiTarget::InputModeL)
+            .midi_runtime
+            .target_value(MidiTarget::InputModeL)
             .map(|v| self.params.input_mode_l.preview_plain(v).into())
             .unwrap_or_else(|| self.params.input_mode_l.value().into());
         let input_mode_r = self
-            .midi_overrides
-            .get(MidiTarget::InputModeR)
+            .midi_runtime
+            .target_value(MidiTarget::InputModeR)
             .map(|v| self.params.input_mode_r.preview_plain(v).into())
             .unwrap_or_else(|| self.params.input_mode_r.value().into());
         let feedback_phase_l = self
-            .midi_overrides
-            .get(MidiTarget::FeedbackPhaseL)
+            .midi_runtime
+            .target_value(MidiTarget::FeedbackPhaseL)
             .map(|v| self.params.feedback_phase_l.preview_plain(v))
             .unwrap_or_else(|| self.params.feedback_phase_l.value());
         let feedback_phase_r = self
-            .midi_overrides
-            .get(MidiTarget::FeedbackPhaseR)
+            .midi_runtime
+            .target_value(MidiTarget::FeedbackPhaseR)
             .map(|v| self.params.feedback_phase_r.preview_plain(v))
             .unwrap_or_else(|| self.params.feedback_phase_r.value());
         let crossfeed_phase_lr = self
-            .midi_overrides
-            .get(MidiTarget::CrossfeedPhaseLr)
+            .midi_runtime
+            .target_value(MidiTarget::CrossfeedPhaseLr)
             .map(|v| self.params.crossfeed_phase_lr.preview_plain(v))
             .unwrap_or_else(|| self.params.crossfeed_phase_lr.value());
         let crossfeed_phase_rl = self
-            .midi_overrides
-            .get(MidiTarget::CrossfeedPhaseRl)
+            .midi_runtime
+            .target_value(MidiTarget::CrossfeedPhaseRl)
             .map(|v| self.params.crossfeed_phase_rl.preview_plain(v))
             .unwrap_or_else(|| self.params.crossfeed_phase_rl.value());
         let routing = self
-            .midi_overrides
-            .get(MidiTarget::Routing)
+            .midi_runtime
+            .target_value(MidiTarget::Routing)
             .map(|v| self.params.routing.preview_plain(v).into())
             .unwrap_or_else(|| self.params.routing.value().into());
         let tempo_sync = self
-            .midi_overrides
-            .get(MidiTarget::TempoSync)
+            .midi_runtime
+            .target_value(MidiTarget::TempoSync)
             .map(|v| self.params.tempo_sync.preview_plain(v))
             .unwrap_or_else(|| self.params.tempo_sync.value());
         let note_l = self
-            .midi_overrides
-            .get(MidiTarget::NoteL)
+            .midi_runtime
+            .target_value(MidiTarget::NoteL)
             .map(|v| self.params.note_l.preview_plain(v).into())
             .unwrap_or_else(|| self.params.note_l.value().into());
         let note_r = self
-            .midi_overrides
-            .get(MidiTarget::NoteR)
+            .midi_runtime
+            .target_value(MidiTarget::NoteR)
             .map(|v| self.params.note_r.preview_plain(v).into())
             .unwrap_or_else(|| self.params.note_r.value().into());
         let halve_l = self
-            .midi_overrides
-            .get(MidiTarget::HalveL)
+            .midi_runtime
+            .target_value(MidiTarget::HalveL)
             .map(|v| self.params.halve_l.preview_plain(v))
             .unwrap_or_else(|| self.params.halve_l.value());
         let halve_r = self
-            .midi_overrides
-            .get(MidiTarget::HalveR)
+            .midi_runtime
+            .target_value(MidiTarget::HalveR)
             .map(|v| self.params.halve_r.preview_plain(v))
             .unwrap_or_else(|| self.params.halve_r.value());
         let double_l = self
-            .midi_overrides
-            .get(MidiTarget::DoubleL)
+            .midi_runtime
+            .target_value(MidiTarget::DoubleL)
             .map(|v| self.params.double_l.preview_plain(v))
             .unwrap_or_else(|| self.params.double_l.value());
         let double_r = self
-            .midi_overrides
-            .get(MidiTarget::DoubleR)
+            .midi_runtime
+            .target_value(MidiTarget::DoubleR)
             .map(|v| self.params.double_r.preview_plain(v))
             .unwrap_or_else(|| self.params.double_r.value());
         let stereo_link = self
-            .midi_overrides
-            .get(MidiTarget::StereoLink)
+            .midi_runtime
+            .target_value(MidiTarget::StereoLink)
             .map(|v| self.params.stereo_link.preview_plain(v))
             .unwrap_or_else(|| self.params.stereo_link.value());
         let oversampling_factor = self
-            .midi_overrides
-            .get(MidiTarget::Oversampling)
+            .midi_runtime
+            .target_value(MidiTarget::Oversampling)
             .map(|v| self.params.oversampling.preview_plain(v).factor())
             .unwrap_or_else(|| self.params.oversampling.value().factor());
         if oversampling_factor != self.oversampling_factor {
@@ -436,8 +320,8 @@ impl Plugin for NebulaStereoDelay {
 
             macro_rules! midi_float {
                 ($target:expr, $param:ident) => {
-                    self.midi_overrides
-                        .get($target)
+                    self.midi_runtime
+                        .target_value($target)
                         .map(|v| self.params.$param.preview_plain(v) as f64)
                         .unwrap_or_else(|| self.params.$param.smoothed.next() as f64)
                 };
