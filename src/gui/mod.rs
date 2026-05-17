@@ -2677,33 +2677,29 @@ fn draw_preset_panel(
 
                     ui.separator();
                     ui.label(rich("Factory", 10.0 * c.s).color(ACCENT).strong());
-                    egui::ScrollArea::vertical()
-                        .max_height(148.0 * c.s)
-                        .show(ui, |ui| {
-                            let factory = state.preset_manager.factory_presets().to_vec();
-                            for preset in factory {
-                                let row_w = ui.available_width();
-                                let button =
-                                    Button::new(rich(&preset.name, 9.0 * c.s).color(TEXT_PRI))
-                                        .fill(WIDGET_BG)
-                                        .stroke(Stroke::new(1.0 * c.s, BORDER))
-                                        .corner_radius(corner_radius(3.0 * c.s));
-                                if ui.add_sized(vec2(row_w, 22.0 * c.s), button).clicked() {
-                                    state.params.push_undo();
-                                    state.preset_manager.load_preset(
-                                        &preset,
-                                        &state.params,
-                                        setter,
-                                    );
-                                    state.preset_status = Some(format!("Loaded {}", preset.name));
-                                    state.preset_menu_open = false;
-                                }
+                    let factory = state.preset_manager.factory_presets().to_vec();
+                    for preset in factory {
+                        ui.push_id(("factory_preset", preset.name.as_str()), |ui| {
+                            let row_w = ui.available_width();
+                            let button = Button::new(rich(&preset.name, 9.0 * c.s).color(TEXT_PRI))
+                                .fill(WIDGET_BG)
+                                .stroke(Stroke::new(1.0 * c.s, BORDER))
+                                .corner_radius(corner_radius(3.0 * c.s));
+                            if ui.add_sized(vec2(row_w, 20.0 * c.s), button).clicked() {
+                                state.params.push_undo();
+                                state
+                                    .preset_manager
+                                    .load_preset(&preset, &state.params, setter);
+                                state.preset_status = Some(format!("Loaded {}", preset.name));
+                                state.preset_menu_open = false;
                             }
                         });
+                    }
 
                     ui.separator();
                     ui.label(rich("User", 10.0 * c.s).color(ACCENT).strong());
                     egui::ScrollArea::vertical()
+                        .id_salt("nebula_user_presets")
                         .max_height(128.0 * c.s)
                         .show(ui, |ui| match state.preset_manager.user_presets() {
                             Ok(user_presets) if user_presets.is_empty() => {
