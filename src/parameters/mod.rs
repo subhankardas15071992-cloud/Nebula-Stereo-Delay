@@ -752,10 +752,10 @@ pub struct NebulaStereoDelayParams {
     // ══════════════════════════════════════════════════════════════════════
     // Internal State (persisted but not automatable)
     // ══════════════════════════════════════════════════════════════════════
-    /// FX bypass flag. When `true`, the DSP engine crossfades to a
-    /// passthrough signal over 512 samples (soft bypass). This is a
-    /// software-internal flag; nih_plug provides its own host-visible
-    /// bypass parameter automatically.
+    /// FX bypass flag. When `true`, the DSP engine immediately passes
+    /// input to output without processing the delay network or level trims.
+    /// This is a software-internal flag; nih_plug provides its own
+    /// host-visible bypass parameter automatically.
     #[persist = "bypass"]
     pub bypass: AtomicBool,
 

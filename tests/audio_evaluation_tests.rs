@@ -219,7 +219,7 @@ fn basic_null_test() {
 
     let output = process_block(&mut engine, &input, &input, &params);
 
-    // Allow warmup for smoother to settle (64 samples for param smoothing + 512 for bypass)
+    // Allow warmup for parameter smoothers to settle.
     let warmup = 600;
     let mut max_diff = 0.0f64;
     for (i, (out_l, out_r)) in output[warmup..].iter().enumerate() {

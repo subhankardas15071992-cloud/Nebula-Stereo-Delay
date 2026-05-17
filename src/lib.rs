@@ -224,8 +224,8 @@ impl Plugin for NebulaStereoDelay {
             .midi_runtime
             .target_value(MidiTarget::Bypass)
             .map(|v| v >= 0.5);
-        let soft_bypass = midi_bypass.unwrap_or_else(|| self.params.bypass.load(Ordering::Relaxed));
-        self.engine.set_bypass(soft_bypass);
+        let hard_bypass = midi_bypass.unwrap_or_else(|| self.params.bypass.load(Ordering::Relaxed));
+        self.engine.set_bypass(hard_bypass);
 
         let input_mode_l = self
             .midi_runtime
@@ -370,7 +370,7 @@ impl Plugin for NebulaStereoDelay {
                 double_r,
                 output_mix_l: midi_float!(MidiTarget::OutputMixL, output_mix_l),
                 output_mix_r: midi_float!(MidiTarget::OutputMixR, output_mix_r),
-                bypass: soft_bypass,
+                bypass: hard_bypass,
                 stereo_link,
             };
 

@@ -7,7 +7,7 @@
 //! # Signal Flow
 //!
 //! ```text
-//! Input ──► Input Mode Selection ──► ──────────────────────────────────► Dry/Wet Mix ──► Soft Bypass ──► Output
+//! Input ──► Hard Bypass Gate ──► Input Mode Selection ─────────────────► Dry/Wet Mix ──► Output
 //!                                      │                                  ▲
 //!                                      ▼                                  │
 //!                                 Delay Line (cubic interp) ──► Filtered Signal (wet)
@@ -26,7 +26,7 @@
 //! - **Safe math**: All divisions guarded, feedback clamped, cutoffs bounded.
 //! - **No panics in DSP paths**: All edge cases handled gracefully.
 //! - **Anti-zipper noise**: Every continuous parameter smoothed via 64-sample linear ramps.
-//! - **Soft bypass**: Crossfade over 512 samples, never a hard cut.
+//! - **Hard bypass**: Immediate passthrough when bypass is engaged.
 
 use std::f64::consts::TAU;
 
@@ -42,9 +42,6 @@ const MAX_DELAY_SECS: f64 = 2.0;
 
 /// Number of samples for parameter-smoothing ramps (anti-zipper noise).
 const SMOOTH_SAMPLES: u64 = 64;
-
-/// Number of samples for the soft-bypass crossfade.
-const BYPASS_FADE_SAMPLES: u64 = 512;
 
 /// Minimum delay in samples — prevents the read head from colliding with
 /// the write head and avoids division-by-zero in interpolation.
@@ -319,7 +316,8 @@ pub struct DelayParams {
     pub output_mix_r: f64,
 
     // ── Bypass ────────────────────────────────────────────────────────
-    /// Soft-bypass flag (crossfades over 512 samples).
+    /// Hard-bypass flag. When enabled, the engine immediately passes input
+    /// to output without processing the delay network or level trims.
     pub bypass: bool,
 
     // ── Stereo link ───────────────────────────────────────────────────
@@ -800,9 +798,7 @@ pub struct DelayEngine {
     smooth_mix_l: SmoothedValue,
     smooth_mix_r: SmoothedValue,
 
-    // ── Soft bypass ───────────────────────────────────────────────────
-    /// Crossfade gain: 1.0 = fully active, 0.0 = fully bypassed.
-    bypass_gain: SmoothedValue,
+    // ── Hard bypass ───────────────────────────────────────────────────
     /// Internal bypass latch set by `set_bypass()`.
     bypass_latch: bool,
 
@@ -886,7 +882,6 @@ impl DelayEngine {
             smooth_crossfeed_rl: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
             smooth_mix_l: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             smooth_mix_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
-            bypass_gain: SmoothedValue::new(1.0, BYPASS_FADE_SAMPLES),
             bypass_latch: false,
             config,
         }
@@ -941,13 +936,9 @@ impl DelayEngine {
             .reset(self.smooth_crossfeed_rl.target);
         self.smooth_mix_l.reset(self.smooth_mix_l.target);
         self.smooth_mix_r.reset(self.smooth_mix_r.target);
-        self.bypass_gain.reset(self.bypass_gain.target);
     }
 
-    /// Engage or release the soft bypass.
-    ///
-    /// The engine crossfades over `BYPASS_FADE_SAMPLES` (512) samples so
-    /// there is never an audible click.
+    /// Engage or release hard bypass.
     pub fn set_bypass(&mut self, bypass: bool) {
         self.bypass_latch = bypass;
     }
@@ -981,6 +972,22 @@ impl DelayEngine {
         // engine keeps the left and right values independent so enabling the
         // link never forces both channels to identical settings.
         let p = params.clone();
+
+        // Hard bypass is intentionally immediate. It skips trims, delay,
+        // filters, feedback, and smoothing; only the final safety catch
+        // remains so the plugin never emits non-finite samples.
+        if p.bypass || self.bypass_latch {
+            let out_l = protect_output_sample(input_l);
+            let out_r = protect_output_sample(input_r);
+            return ProcessedFrame {
+                output_l: out_l,
+                output_r: out_r,
+                input_meter_l: input_l,
+                input_meter_r: input_r,
+                output_meter_l: out_l,
+                output_meter_r: out_r,
+            };
+        }
 
         let input_gain_target = db_to_gain(p.input_level_db.clamp(-50.0, 50.0));
         let output_gain_target = db_to_gain(p.output_level_db.clamp(-50.0, 50.0));
@@ -1045,11 +1052,6 @@ impl DelayEngine {
         self.smooth_mix_l.set_target(p.output_mix_l.clamp(0.0, 1.0));
         self.smooth_mix_r.set_target(p.output_mix_r.clamp(0.0, 1.0));
 
-        // Bypass: either the param flag or the latch can engage bypass.
-        let bypass_active = p.bypass || self.bypass_latch;
-        self.bypass_gain
-            .set_target(if bypass_active { 0.0 } else { 1.0 });
-
         // ── 5. Advance smoothers and capture values ───────────────────
         let s_delay_l = self.smooth_delay_l.next();
         let s_delay_r = self.smooth_delay_r.next();
@@ -1067,7 +1069,6 @@ impl DelayEngine {
         let s_cf_rl = self.smooth_crossfeed_rl.next();
         let s_mix_l = self.smooth_mix_l.next();
         let s_mix_r = self.smooth_mix_r.next();
-        let s_bypass = self.bypass_gain.next();
 
         // ── 6. Update complementary filters from smoothed cutoffs/slopes ─────
         self.low_cut_l.update(s_lc_l, s_lcs_l, self.sample_rate);
@@ -1117,12 +1118,6 @@ impl DelayEngine {
         //   out = dry * (1 - mix) + wet * mix
         let out_l = in_l * (1.0 - s_mix_l) + wet_l * s_mix_l;
         let out_r = in_r * (1.0 - s_mix_r) + wet_r * s_mix_r;
-
-        // ── 14. Soft bypass crossfade ──────────────────────────────────
-        //   When bypassed, fade towards the original (unprocessed) input.
-        //   bypass_gain = 1 → fully processed, 0 → fully bypassed.
-        let out_l = input_l + (out_l - input_l) * s_bypass;
-        let out_r = input_r + (out_r - input_r) * s_bypass;
 
         let out_l = protect_output_sample(out_l * s_output_gain);
         let out_r = protect_output_sample(out_r * s_output_gain);
@@ -1454,22 +1449,33 @@ mod tests {
         let mut engine = DelayEngine::new(44100.0);
         let params = DelayParams {
             bypass: true,
+            input_level_db: 50.0,
+            output_level_db: 50.0,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
+            feedback_l: 1.0,
+            feedback_r: 1.0,
             ..DelayParams::default()
         };
 
-        // Run enough samples for the bypass crossfade to complete.
-        for _ in 0..2000 {
-            engine.process(0.5, -0.3, &params);
-        }
-
         let (l, r) = engine.process(0.5, -0.3, &params);
+        assert_eq!(l, 0.5, "hard-bypassed left should be dry immediately");
+        assert_eq!(r, -0.3, "hard-bypassed right should be dry immediately");
+
+        engine.set_bypass(true);
+        let active_params = DelayParams {
+            bypass: false,
+            input_level_db: 50.0,
+            output_level_db: 50.0,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
+            ..DelayParams::default()
+        };
+        let (l, r) = engine.process(0.25, -0.25, &active_params);
+        assert_eq!(l, 0.25, "bypass latch should hard-pass left input");
         assert!(
-            (l - 0.5).abs() < 0.01,
-            "bypassed left should ≈ dry, got {l}"
-        );
-        assert!(
-            (r - (-0.3)).abs() < 0.01,
-            "bypassed right should ≈ dry, got {r}"
+            (r + 0.25).abs() < f64::EPSILON,
+            "bypass latch should hard-pass right input"
         );
     }
 
