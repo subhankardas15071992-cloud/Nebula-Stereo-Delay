@@ -98,17 +98,17 @@ const ARC_END: f32 = ARC_START + 3.0 * std::f32::consts::FRAC_PI_2;
 const ARC_SWEEP: f32 = ARC_END - ARC_START;
 
 /// Default window width in logical pixels.
-const WIN_W: u32 = 770;
+const WIN_W: u32 = 860;
 /// Default window height in logical pixels.
-const WIN_H: u32 = 568;
+const WIN_H: u32 = 640;
 
-const LOGIC_W: f32 = 770.0;
-const LOGIC_H: f32 = 568.0;
-const TOP_H: f32 = 36.0;
+const LOGIC_W: f32 = 860.0;
+const LOGIC_H: f32 = 640.0;
+const TOP_H: f32 = 148.0;
 const FOOT_H: f32 = 34.0;
-const LEFT_W: f32 = 289.0;
-const RIGHT_W: f32 = 289.0;
-const GLOBAL_X: f32 = LEFT_W + RIGHT_W;
+const LEFT_W: f32 = 342.0;
+const RIGHT_W: f32 = 342.0;
+const GLOBAL_X: f32 = 708.0;
 
 const LOGIC_BG: Color32 = Color32::from_rgb(0x21, 0x39, 0x50);
 const LOGIC_BG_ALT: Color32 = Color32::from_rgb(0x1D, 0x34, 0x49);
@@ -152,7 +152,7 @@ struct EditorState {
 /// Create the egui editor for the Nebula Stereo Delay plugin.
 ///
 /// Returns `Option<Box<dyn Editor>>` suitable for use in the plugin's
-/// `editor()` method. The window starts at 770 × 568 logical pixels and
+/// `editor()` method. The window starts at 860 × 640 logical pixels and
 /// is freely resizable via the corner drag handle; all elements scale
 /// proportionally with the window size and system DPI.
 pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dyn Editor>> {
@@ -179,7 +179,7 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
             // for window-size coordination.
             let egui_state = state.egui_state.clone();
             nih_plug_egui::resizable_window::ResizableWindow::new("nebula-stereo-delay")
-                .min_size(vec2(560.0, 414.0))
+                .min_size(vec2(700.0, 520.0))
                 .show(ctx, egui_state.as_ref(), |ui| {
                     let root_rect = ui.max_rect();
                     let mut root_ui = ui.new_child(
@@ -198,10 +198,10 @@ fn draw_root(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
     let root_rect = ui.max_rect();
 
     // Full-background fill.
-    ui.painter().rect_filled(root_rect, 0.0, LOGIC_TOP);
+    ui.painter().rect_filled(root_rect, 0.0, BG);
 
     ui.set_min_size(root_rect.size());
-    draw_logic_editor(ui, state, setter);
+    draw_nebula_editor(ui, state, setter);
 }
 
 #[derive(Clone, Copy)]
@@ -230,6 +230,795 @@ impl LogicCanvas {
     fn font(self, size: f32) -> FontId {
         FontId::proportional(size * self.s)
     }
+}
+
+fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
+    let host = ui.max_rect();
+    let c = LogicCanvas::new(host);
+    let painter = ui.painter().clone();
+
+    painter.rect_filled(host, 0.0, Color32::BLACK);
+    painter.rect_filled(c.rect, 0.0, BG);
+    draw_nebula_grid(&painter, c);
+
+    painter.rect_filled(
+        c.rect(0.0, 0.0, LOGIC_W, 32.0),
+        0.0,
+        Color32::from_rgb(0x16, 0x16, 0x19),
+    );
+    painter.text(
+        c.pos(LOGIC_W * 0.5, 16.0),
+        Align2::CENTER_CENTER,
+        "Nebula Stereo Delay",
+        c.font(13.0),
+        TEXT_PRI,
+    );
+
+    painter.rect_filled(c.rect(0.0, 32.0, LOGIC_W, 76.0), 0.0, PANEL_BG);
+    painter.rect_filled(
+        c.rect(18.0, 52.0, 20.0, 20.0),
+        corner_radius(4.0 * c.s),
+        ACCENT,
+    );
+    painter.text(
+        c.pos(28.0, 62.0),
+        Align2::CENTER_CENTER,
+        "N",
+        c.font(11.0),
+        BG,
+    );
+    painter.text(
+        c.pos(48.0, 58.0),
+        Align2::LEFT_CENTER,
+        "Nebula Stereo Delay",
+        c.font(18.0),
+        TEXT_PRI,
+    );
+    painter.text(
+        c.pos(48.0, 80.0),
+        Align2::LEFT_CENTER,
+        "Stereo Delay Processor  |  Native UI  |  64-bit",
+        c.font(11.0),
+        TEXT_SEC,
+    );
+    painter.text(
+        c.pos(828.0, 66.0),
+        Align2::RIGHT_CENTER,
+        "v1.0",
+        c.font(11.0),
+        TEXT_SEC,
+    );
+
+    draw_nebula_toolbar(ui, state, setter, c);
+
+    nebula_panel(
+        &painter,
+        c,
+        c.rect(8.0, TOP_H, LEFT_W, LOGIC_H - TOP_H - FOOT_H - 8.0),
+    );
+    nebula_panel(
+        &painter,
+        c,
+        c.rect(358.0, TOP_H, RIGHT_W, LOGIC_H - TOP_H - FOOT_H - 8.0),
+    );
+    nebula_panel(
+        &painter,
+        c,
+        c.rect(GLOBAL_X, TOP_H, 144.0, LOGIC_H - TOP_H - FOOT_H - 8.0),
+    );
+
+    draw_nebula_channel(ui, state, setter, c, Channel::Left, 8.0);
+    draw_nebula_channel(ui, state, setter, c, Channel::Right, 358.0);
+    draw_nebula_global(ui, state, setter, c);
+
+    painter.rect_filled(
+        c.rect(0.0, LOGIC_H - FOOT_H, LOGIC_W, FOOT_H),
+        0.0,
+        Color32::from_rgb(0x18, 0x18, 0x1A),
+    );
+    painter.text(
+        c.pos(LOGIC_W * 0.5, LOGIC_H - 15.0),
+        Align2::CENTER_CENTER,
+        "Nebula Stereo Delay",
+        c.font(20.0),
+        TEXT_PRI,
+    );
+}
+
+fn draw_nebula_grid(painter: &Painter, c: LogicCanvas) {
+    let line = Stroke::new(
+        1.0 * c.s,
+        Color32::from_rgba_premultiplied(0x36, 0x2A, 0x78, 0x24),
+    );
+    let mut x = 0.0;
+    while x <= LOGIC_W {
+        painter.line_segment([c.pos(x, 32.0), c.pos(x, LOGIC_H - FOOT_H)], line);
+        x += 32.0;
+    }
+    let mut y = 32.0;
+    while y <= LOGIC_H - FOOT_H {
+        painter.line_segment([c.pos(0.0, y), c.pos(LOGIC_W, y)], line);
+        y += 32.0;
+    }
+}
+
+fn nebula_panel(painter: &Painter, c: LogicCanvas, rect: Rect) {
+    painter.rect_filled(rect, corner_radius(7.0 * c.s), PANEL_BG);
+    painter.rect_stroke(
+        rect,
+        corner_radius(7.0 * c.s),
+        Stroke::new(1.0 * c.s, BORDER),
+        egui::StrokeKind::Outside,
+    );
+    painter.rect_stroke(
+        rect.shrink(2.0 * c.s),
+        corner_radius(5.0 * c.s),
+        Stroke::new(
+            1.0 * c.s,
+            Color32::from_rgba_premultiplied(0x00, 0xD8, 0xFF, 0x22),
+        ),
+        egui::StrokeKind::Outside,
+    );
+}
+
+fn draw_nebula_toolbar(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+) {
+    let y = 116.0;
+    logic_preset_button(ui, state, setter, c, c.rect(8.0, y, 88.0, 26.0));
+    logic_ab_button(ui, state, setter, c, c.rect(102.0, y, 72.0, 26.0));
+    logic_undo_button(ui, state, setter, c, c.rect(180.0, y, 64.0, 26.0));
+    logic_redo_button(ui, state, setter, c, c.rect(250.0, y, 64.0, 26.0));
+    logic_midi_button(ui, state, c, c.rect(322.0, y, 92.0, 26.0));
+
+    let bypassed = state.params.bypass.load(Ordering::Relaxed);
+    let fx = logic_button(
+        ui,
+        c,
+        c.rect(422.0, y, 78.0, 26.0),
+        if bypassed { "FX OFF" } else { "FX ON" },
+        !bypassed,
+        "nebula_fx",
+    );
+    if fx.clicked() {
+        state.params.bypass.store(!bypassed, Ordering::Relaxed);
+    }
+
+    let params = state.params.clone();
+    nebula_bool_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(508.0, y, 92.0, 26.0),
+        &params.tempo_sync,
+        if params.tempo_sync.value() {
+            "SYNC"
+        } else {
+            "FREE"
+        },
+        "nebula_sync",
+    );
+    nebula_bool_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(608.0, y, 118.0, 26.0),
+        &params.stereo_link,
+        if params.stereo_link.value() {
+            "LINKED"
+        } else {
+            "UNLINKED"
+        },
+        "nebula_link",
+    );
+}
+
+fn draw_nebula_channel(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    x: f32,
+) {
+    let painter = ui.painter().clone();
+    let params = state.params.clone();
+    let title = if ch == Channel::Left {
+        "LEFT DELAY"
+    } else {
+        "RIGHT DELAY"
+    };
+    let id = if ch == Channel::Left { "l" } else { "r" };
+
+    painter.text(
+        c.pos(x + 171.0, 169.0),
+        Align2::CENTER_CENTER,
+        title,
+        c.font(18.0),
+        ACCENT,
+    );
+
+    nebula_text(
+        &painter,
+        c,
+        x + 20.0,
+        195.0,
+        "INPUT",
+        TEXT_SEC,
+        9.0,
+        Align2::LEFT_CENTER,
+    );
+    logic_input_dropdown(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 18.0, 206.0, 82.0, 24.0),
+        ch,
+    );
+
+    draw_nebula_delay(ui, state, setter, c, ch, x + 171.0, 252.0, id);
+
+    nebula_divider(&painter, c, x + 16.0, 326.0, x + 326.0);
+    painter.text(
+        c.pos(x + 171.0, 344.0),
+        Align2::CENTER_CENTER,
+        "FILTER",
+        c.font(10.0),
+        TEXT_SEC,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        ch_knob_param!(params, ch, low_cut_l, low_cut_r),
+        x + 48.0,
+        386.0,
+        23.0,
+        "HPF",
+        ORANGE,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        ch_knob_param!(params, ch, low_cut_slope_l, low_cut_slope_r),
+        x + 124.0,
+        386.0,
+        23.0,
+        "HPFS",
+        ORANGE,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        ch_knob_param!(params, ch, high_cut_l, high_cut_r),
+        x + 218.0,
+        386.0,
+        23.0,
+        "LPF",
+        ORANGE,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        ch_knob_param!(params, ch, high_cut_slope_l, high_cut_slope_r),
+        x + 294.0,
+        386.0,
+        23.0,
+        "LPFS",
+        ORANGE,
+    );
+
+    nebula_divider(&painter, c, x + 16.0, 446.0, x + 326.0);
+    let feedback = ch_knob_param!(params, ch, feedback_l, feedback_r);
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        feedback,
+        x + 88.0,
+        500.0,
+        30.0,
+        "FEEDBACK",
+        MAGENTA,
+    );
+    let fb_phase = if ch == Channel::Left {
+        &params.feedback_phase_l
+    } else {
+        &params.feedback_phase_r
+    };
+    nebula_phase_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 57.0, 563.0, 62.0, 24.0),
+        fb_phase,
+        "PHASE",
+    );
+
+    let (cf, cf_phase, cf_label) = if ch == Channel::Left {
+        (&params.crossfeed_lr, &params.crossfeed_phase_lr, "L -> R")
+    } else {
+        (&params.crossfeed_rl, &params.crossfeed_phase_rl, "R -> L")
+    };
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        cf,
+        x + 254.0,
+        500.0,
+        30.0,
+        cf_label,
+        PURPLE,
+    );
+    nebula_phase_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 223.0, 563.0, 62.0, 24.0),
+        cf_phase,
+        "PHASE",
+    );
+}
+
+fn draw_nebula_delay(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    cx: f32,
+    cy: f32,
+    id: &str,
+) {
+    let painter = ui.painter().clone();
+    let params = state.params.clone();
+    let synced = params.tempo_sync.value();
+    let delay = if ch == Channel::Left {
+        &params.delay_time_l
+    } else {
+        &params.delay_time_r
+    };
+    let note = if ch == Channel::Left {
+        &params.note_l
+    } else {
+        &params.note_r
+    };
+    let deviation = if ch == Channel::Left {
+        &params.deviation_l
+    } else {
+        &params.deviation_r
+    };
+
+    let value = if synced {
+        format!("{:.0} ms", synced_delay_ms(note.value(), deviation.value()))
+    } else {
+        format!("{:.0} ms", delay.value() * 1000.0)
+    };
+
+    painter.text(
+        c.pos(cx, cy - 68.0),
+        Align2::CENTER_CENTER,
+        "DELAY TIME",
+        c.font(10.0),
+        TEXT_SEC,
+    );
+    painter.text(
+        c.pos(cx, cy - 51.0),
+        Align2::CENTER_CENTER,
+        value,
+        c.font(14.0),
+        ACCENT,
+    );
+    logic_delay_knob(
+        ui,
+        state,
+        setter,
+        c,
+        ch,
+        cx,
+        cy,
+        42.0,
+        &format!("{id}_delay"),
+    );
+
+    logic_delay_scale_button(
+        ui,
+        state,
+        setter,
+        c,
+        ch,
+        c.rect(cx - 56.0, cy + 39.0, 34.0, 22.0),
+        0.5,
+        ":2",
+        &format!("{id}_halve"),
+    );
+    logic_delay_scale_button(
+        ui,
+        state,
+        setter,
+        c,
+        ch,
+        c.rect(cx + 22.0, cy + 39.0, 34.0, 22.0),
+        2.0,
+        "x2",
+        &format!("{id}_double"),
+    );
+
+    painter.text(
+        c.pos(cx + 104.0, cy - 43.0),
+        Align2::CENTER_CENTER,
+        "NOTE",
+        c.font(9.0),
+        TEXT_SEC,
+    );
+    if synced {
+        logic_note_dropdown(
+            ui,
+            state,
+            setter,
+            c,
+            c.rect(cx + 64.0, cy - 31.0, 82.0, 24.0),
+            ch,
+        );
+    } else {
+        nebula_value_box(
+            &painter,
+            c,
+            c.rect(cx + 64.0, cy - 31.0, 82.0, 24.0),
+            enum_name(note.value()),
+            false,
+        );
+    }
+
+    painter.text(
+        c.pos(cx + 104.0, cy + 15.0),
+        Align2::CENTER_CENTER,
+        "DEVIATION",
+        c.font(9.0),
+        TEXT_SEC,
+    );
+    nebula_deviation_input(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(cx + 64.0, cy + 27.0, 82.0, 24.0),
+        deviation,
+        &format!("{id}_dev_input"),
+        synced,
+    );
+}
+
+fn draw_nebula_global(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+) {
+    let painter = ui.painter().clone();
+    let x = GLOBAL_X;
+    let params = state.params.clone();
+
+    painter.text(
+        c.pos(x + 72.0, 169.0),
+        Align2::CENTER_CENTER,
+        "GLOBAL",
+        c.font(18.0),
+        ACCENT,
+    );
+    painter.text(
+        c.pos(x + 72.0, 198.0),
+        Align2::CENTER_CENTER,
+        "ROUTING",
+        c.font(9.0),
+        TEXT_SEC,
+    );
+    logic_routing_dropdown(ui, state, setter, c, c.rect(x + 12.0, 210.0, 120.0, 25.0));
+
+    nebula_bool_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 22.0, 260.0, 100.0, 28.0),
+        &params.tempo_sync,
+        if params.tempo_sync.value() {
+            "SYNC ON"
+        } else {
+            "SYNC OFF"
+        },
+        "global_sync",
+    );
+    nebula_bool_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 22.0, 306.0, 100.0, 28.0),
+        &params.stereo_link,
+        if params.stereo_link.value() {
+            "LINKED"
+        } else {
+            "UNLINKED"
+        },
+        "global_link",
+    );
+
+    nebula_divider(&painter, c, x + 14.0, 366.0, x + 130.0);
+    painter.text(
+        c.pos(x + 72.0, 390.0),
+        Align2::CENTER_CENTER,
+        "OUTPUT MIX",
+        c.font(14.0),
+        ACCENT,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.output_mix_l,
+        x + 42.0,
+        454.0,
+        28.0,
+        "LEFT",
+        ACCENT,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.output_mix_r,
+        x + 102.0,
+        454.0,
+        28.0,
+        "RIGHT",
+        ACCENT,
+    );
+}
+
+fn nebula_knob_cell(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    param: &nih_plug::params::FloatParam,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    label: &str,
+    accent: Color32,
+) {
+    let painter = ui.painter().clone();
+    painter.text(
+        c.pos(cx, cy - r - 18.0),
+        Align2::CENTER_CENTER,
+        label,
+        c.font(9.0),
+        TEXT_SEC,
+    );
+    logic_float_knob(
+        ui,
+        state,
+        setter,
+        c,
+        param,
+        cx,
+        cy,
+        r,
+        accent,
+        &format!("nebula_{}", param_id_for(param.name())),
+    );
+    let box_w = if r <= 28.0 { 58.0 } else { 72.0 };
+    nebula_value_box(
+        &painter,
+        c,
+        c.rect(cx - box_w * 0.5, cy + r + 8.0, box_w, 19.0),
+        &param.to_string(),
+        true,
+    );
+}
+
+fn nebula_value_box(painter: &Painter, c: LogicCanvas, rect: Rect, text: &str, enabled: bool) {
+    painter.rect_filled(
+        rect,
+        corner_radius(3.0 * c.s),
+        if enabled {
+            INSET_BG
+        } else {
+            Color32::from_rgba_premultiplied(0x12, 0x10, 0x24, 0x88)
+        },
+    );
+    painter.rect_stroke(
+        rect,
+        corner_radius(3.0 * c.s),
+        Stroke::new(
+            1.0 * c.s,
+            if enabled {
+                BORDER
+            } else {
+                Color32::from_rgb(0x22, 0x1A, 0x45)
+            },
+        ),
+        egui::StrokeKind::Outside,
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        text,
+        c.font(9.0),
+        if enabled { TEXT_PRI } else { TEXT_SEC },
+    );
+}
+
+fn nebula_deviation_input(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::FloatParam,
+    _id: &str,
+    enabled: bool,
+) {
+    let painter = ui.painter().clone();
+    painter.rect_filled(
+        rect,
+        corner_radius(3.0 * c.s),
+        if enabled { INSET_BG } else { WIDGET_BG },
+    );
+    painter.rect_stroke(
+        rect,
+        corner_radius(3.0 * c.s),
+        Stroke::new(
+            1.0 * c.s,
+            if enabled {
+                BORDER
+            } else {
+                Color32::from_rgb(0x22, 0x1A, 0x45)
+            },
+        ),
+        egui::StrokeKind::Outside,
+    );
+
+    if enabled {
+        let old = param.value();
+        let mut value = old;
+        let resp = ui.put(
+            rect.shrink(2.0 * c.s),
+            egui::DragValue::new(&mut value)
+                .speed(0.1)
+                .range(-100.0..=100.0)
+                .max_decimals(1)
+                .suffix(" ct"),
+        );
+        if resp.changed() {
+            state.params.push_undo();
+            setter.begin_set_parameter(param);
+            setter.set_parameter(param, value.clamp(-100.0, 100.0));
+            setter.end_set_parameter(param);
+            if stereo_link_active(ui, &state.params) {
+                if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                    let delta = value - old;
+                    setter.begin_set_parameter(other);
+                    setter.set_parameter(other, (other.value() + delta).clamp(-100.0, 100.0));
+                    setter.end_set_parameter(other);
+                }
+            }
+        }
+        let resp = resp.on_hover_text("Type or drag the deviation value in cents");
+        add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+    } else {
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            format!("{:.1} ct", param.value()),
+            c.font(9.0),
+            TEXT_SEC,
+        );
+    }
+}
+
+fn nebula_bool_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::BoolParam,
+    label: &str,
+    id: &str,
+) {
+    let resp = logic_button(ui, c, rect, label, param.value(), id);
+    if resp.clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, !param.value());
+        setter.end_set_parameter(param);
+    }
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn nebula_phase_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::BoolParam,
+    label: &str,
+) {
+    let text = if param.value() {
+        format!("{label} INV")
+    } else {
+        format!("{label} 0")
+    };
+    let resp = logic_button(
+        ui,
+        c,
+        rect,
+        &text,
+        param.value(),
+        &format!("nebula_phase_{}", param_id_for(param.name())),
+    );
+    if resp.clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, !param.value());
+        setter.end_set_parameter(param);
+        if stereo_link_active(ui, &state.params) {
+            if let Some(other) = linked_bool_counterpart(&state.params, param.name()) {
+                setter.begin_set_parameter(other);
+                setter.set_parameter(other, !other.value());
+                setter.end_set_parameter(other);
+            }
+        }
+    }
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn nebula_divider(painter: &Painter, c: LogicCanvas, x1: f32, y: f32, x2: f32) {
+    painter.line_segment(
+        [c.pos(x1, y), c.pos(x2, y)],
+        Stroke::new(
+            1.0 * c.s,
+            Color32::from_rgba_premultiplied(0x63, 0x86, 0xC7, 0x35),
+        ),
+    );
+}
+
+fn nebula_text(
+    painter: &Painter,
+    c: LogicCanvas,
+    x: f32,
+    y: f32,
+    text: &str,
+    color: Color32,
+    size: f32,
+    align: Align2,
+) {
+    painter.text(c.pos(x, y), align, text, c.font(size), color);
 }
 
 fn draw_logic_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
@@ -859,20 +1648,27 @@ fn logic_button(
 ) -> Response {
     let resp = ui.interact(rect, ui.id().with(id), Sense::click());
     let fill = if active {
-        LOGIC_BUTTON_ON
+        ACCENT
     } else if resp.hovered() {
-        LOGIC_BUTTON_HOVER
+        Color32::from_rgb(0x21, 0x1B, 0x4A)
     } else {
-        LOGIC_BUTTON
+        WIDGET_BG
     };
+    let stroke = if active { ACCENT } else { BORDER };
     ui.painter()
         .rect_filled(rect, corner_radius(4.0 * c.s), fill);
+    ui.painter().rect_stroke(
+        rect,
+        corner_radius(4.0 * c.s),
+        Stroke::new(1.0 * c.s, stroke),
+        egui::StrokeKind::Outside,
+    );
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
         label,
         c.font(11.0),
-        if active { LOGIC_MINT } else { LOGIC_DIM },
+        if active { BG } else { TEXT_PRI },
     );
     resp
 }
@@ -1040,15 +1836,28 @@ fn draw_logic_knob_visual(
 ) {
     let center = c.pos(cx, cy);
     let radius = r * c.s;
-    painter.circle_filled(center, radius, Color32::from_rgb(0x2C, 0x41, 0x52));
-    painter.circle_stroke(center, radius, Stroke::new(2.2 * c.s, Color32::BLACK));
+    painter.circle_filled(
+        center + vec2(1.6 * c.s, 2.0 * c.s),
+        radius,
+        Color32::from_black_alpha(100),
+    );
+    painter.circle_filled(center, radius, WIDGET_BG);
+    painter.circle_stroke(center, radius, Stroke::new(1.0 * c.s, BORDER));
+    painter.circle_stroke(
+        center,
+        radius + 3.0 * c.s,
+        Stroke::new(
+            1.0 * c.s,
+            Color32::from_rgba_premultiplied(0x00, 0xD8, 0xFF, 0x2A),
+        ),
+    );
     draw_arc_line(
         painter,
         center,
         radius + 1.5 * c.s,
         ARC_START,
         ARC_END,
-        Stroke::new(4.0 * c.s, Color32::from_rgb(0x0E, 0x18, 0x22)),
+        Stroke::new(4.0 * c.s, KNOB_TRACK),
     );
     draw_arc_line(
         painter,
@@ -1059,24 +1868,35 @@ fn draw_logic_knob_visual(
         Stroke::new(4.0 * c.s, accent),
     );
     let angle = ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0);
-    let p2 = center + vec2(angle.cos() * radius * 0.78, angle.sin() * radius * 0.78);
-    painter.line_segment([center, p2], Stroke::new(1.5 * c.s, accent));
+    let p1 = center + vec2(angle.cos() * radius * 0.28, angle.sin() * radius * 0.28);
+    let p2 = center + vec2(angle.cos() * radius * 0.76, angle.sin() * radius * 0.76);
+    painter.line_segment([p1, p2], Stroke::new(2.0 * c.s, TEXT_PRI));
+    painter.circle_filled(p2, 2.4 * c.s, accent);
+    painter.circle_filled(center, 2.3 * c.s, TEXT_PRI);
 }
 
 fn draw_logic_note_ring(painter: &Painter, c: LogicCanvas, cx: f32, cy: f32, r: f32) {
-    let marks = ["♪", "·", "♪", "·", "♩", "·", "♩", "·", "♪", "·", "♩", "·"];
     let center = c.pos(cx, cy);
-    for (idx, mark) in marks.iter().enumerate() {
-        let t = idx as f32 / marks.len() as f32;
+    let variants = note_variants();
+    let denom = (variants.len() - 1) as f32;
+    for (idx, (_, label)) in variants.iter().enumerate() {
+        let t = idx as f32 / denom.max(1.0);
         let angle = ARC_START + ARC_SWEEP * t;
-        let pos = center + vec2(angle.cos() * r * c.s, angle.sin() * r * c.s);
-        painter.text(
-            pos,
-            Align2::CENTER_CENTER,
-            *mark,
-            c.font(if *mark == "·" { 13.0 } else { 11.0 }),
-            if *mark == "·" { LOGIC_DIM } else { LOGIC_TEXT },
-        );
+        let dir = vec2(angle.cos(), angle.sin());
+        let inner = center + vec2(dir.x * (r - 3.0) * c.s, dir.y * (r - 3.0) * c.s);
+        let outer = center + vec2(dir.x * (r + 4.0) * c.s, dir.y * (r + 4.0) * c.s);
+        let color = if label.ends_with('.') {
+            ORANGE
+        } else if label.ends_with('T') {
+            PURPLE
+        } else {
+            ACCENT
+        };
+        if label.ends_with('.') || label.ends_with('T') {
+            painter.circle_filled(outer, 2.2 * c.s, color);
+        } else {
+            painter.line_segment([inner, outer], Stroke::new(1.6 * c.s, color));
+        }
     }
 }
 
@@ -1406,11 +2226,11 @@ fn logic_preset_button(
         egui::popup::PopupCloseBehavior::CloseOnClickOutside,
         |ui| {
             Frame::NONE
-                .fill(LOGIC_BG_ALT)
-                .stroke(Stroke::new(1.0, LOGIC_LINE))
+                .fill(PANEL_BG)
+                .stroke(Stroke::new(1.0, BORDER))
                 .show(ui, |ui| {
                     ui.set_min_width(240.0 * c.s);
-                    ui.label(rich("Save", 10.0 * c.s).color(LOGIC_TITLE).strong());
+                    ui.label(rich("Save", 10.0 * c.s).color(ACCENT).strong());
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut state.preset_name)
@@ -1458,10 +2278,10 @@ fn logic_preset_button(
                         }
                     });
                     if let Some(status) = &state.preset_status {
-                        ui.label(rich(status, 9.0 * c.s).color(LOGIC_DIM));
+                        ui.label(rich(status, 9.0 * c.s).color(TEXT_SEC));
                     }
                     ui.separator();
-                    ui.label(rich("Factory", 10.0 * c.s).color(LOGIC_TITLE).strong());
+                    ui.label(rich("Factory", 10.0 * c.s).color(ACCENT).strong());
                     let factory = state.preset_manager.factory_presets().to_vec();
                     for preset in factory {
                         if ui.button(&preset.name).clicked() {
@@ -1474,10 +2294,10 @@ fn logic_preset_button(
                         }
                     }
                     ui.separator();
-                    ui.label(rich("User", 10.0 * c.s).color(LOGIC_TITLE).strong());
+                    ui.label(rich("User", 10.0 * c.s).color(ACCENT).strong());
                     match state.preset_manager.user_presets() {
                         Ok(user_presets) if user_presets.is_empty() => {
-                            ui.label(rich("No user presets", 9.0 * c.s).color(LOGIC_DIM));
+                            ui.label(rich("No user presets", 9.0 * c.s).color(TEXT_SEC));
                         }
                         Ok(user_presets) => {
                             for preset in user_presets {
@@ -1789,8 +2609,8 @@ fn logic_enum_popup(
         egui::popup::PopupCloseBehavior::CloseOnClick,
         |ui| {
             Frame::NONE
-                .fill(LOGIC_BG_ALT)
-                .stroke(Stroke::new(1.0, LOGIC_LINE))
+                .fill(PANEL_BG)
+                .stroke(Stroke::new(1.0, BORDER))
                 .show(ui, |ui| {
                     ui.set_min_width(96.0 * c.s);
                     add_contents(ui);

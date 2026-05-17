@@ -68,7 +68,7 @@ Click MIDI, click a control, then move a MIDI controller. The next CC maps to th
 The FX bypass crossfades over 512 samples. No clicks. No pops. No hard cuts.
 
 ### Freely Scalable GUI
-Built with egui on macOS and Linux. The window starts at 770x568 and scales as a single fixed-ratio editor surface, so host resizing does not chop controls. DPI-aware on high-resolution displays. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
+Built with egui on macOS and Linux. The window starts at 860x640 and scales as a single fixed-ratio editor surface, so host resizing does not chop controls. DPI-aware on high-resolution displays. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
 
 ---
 
