@@ -44,8 +44,8 @@ use nih_plug::params::enums::Enum;
 use nih_plug::params::Param;
 use nih_plug::prelude::{Editor, ParamSetter};
 use nih_plug_egui::egui::{
-    self, vec2, Button, Color32, Context, CornerRadius, Frame, Painter, Pos2, Rect, Response,
-    Sense, Shape, Stroke, Ui,
+    self, vec2, Align, Button, Color32, Context, CornerRadius, Frame, Layout, Painter, Pos2, Rect,
+    Response, ScrollArea, Sense, Shape, Stroke, Ui, UiBuilder,
 };
 use nih_plug_egui::EguiState;
 
@@ -154,7 +154,13 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
             nih_plug_egui::resizable_window::ResizableWindow::new("nebula-stereo-delay")
                 .min_size(vec2(600.0, 400.0))
                 .show(ctx, egui_state.as_ref(), |ui| {
-                    draw_root(ui, state, setter);
+                    let root_rect = ui.max_rect();
+                    let mut root_ui = ui.new_child(
+                        UiBuilder::new()
+                            .max_rect(root_rect)
+                            .layout(Layout::top_down(Align::Min)),
+                    );
+                    draw_root(&mut root_ui, state, setter);
                 });
         },
     )
@@ -162,28 +168,53 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
 
 /// Draw the entire plugin UI into the given `Ui`.
 fn draw_root(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
+    let root_rect = ui.max_rect();
+
     // Derive a proportional scale factor from the available width.
     // Reference width = 1200 logical px; all sizes are multiplied by `s`.
-    let s = (ui.available_width() / 1200.0).clamp(0.4, 2.5);
+    let s = (root_rect.width() / 1200.0).clamp(0.55, 2.5);
 
     // Full-background fill.
-    ui.painter().rect_filled(ui.max_rect(), 0.0, BG);
+    ui.painter().rect_filled(root_rect, 0.0, BG);
 
-    ui.vertical(|ui| {
+    ui.set_min_size(root_rect.size());
+
+    ScrollArea::vertical()
+        .id_salt("nebula_editor_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_min_width(root_rect.width());
+            draw_editor_contents(ui, state, setter, s);
+        });
+}
+
+fn draw_editor_contents(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
+    ui.with_layout(Layout::top_down(Align::Min), |ui| {
         // ── Top Bar ─────────────────────────────────────────
         draw_top_bar(ui, state, setter, s);
 
         ui.add_space(6.0 * s);
 
         // ── Main content row: Left | Center | Right ─────────
-        ui.horizontal(|ui| {
-            let center_w = 88.0 * s;
-            let side_w = (ui.available_width() - center_w) / 2.0;
+        let content_w = ui.available_width().max(320.0);
+        if content_w < 900.0 {
+            draw_channel_panel(ui, state, setter, s, Channel::Left, content_w);
+            ui.add_space(6.0 * s);
+            draw_center_section(ui, state, setter, s, content_w);
+            ui.add_space(6.0 * s);
+            draw_channel_panel(ui, state, setter, s, Channel::Right, content_w);
+        } else {
+            ui.horizontal(|ui| {
+                let center_w = 96.0 * s;
+                let side_w = ((ui.available_width() - center_w - 12.0 * s) / 2.0).max(240.0 * s);
 
-            draw_channel_panel(ui, state, setter, s, Channel::Left, side_w);
-            draw_center_section(ui, state, setter, s, center_w);
-            draw_channel_panel(ui, state, setter, s, Channel::Right, side_w);
-        });
+                draw_channel_panel(ui, state, setter, s, Channel::Left, side_w);
+                ui.add_space(6.0 * s);
+                draw_center_section(ui, state, setter, s, center_w);
+                ui.add_space(6.0 * s);
+                draw_channel_panel(ui, state, setter, s, Channel::Right, side_w);
+            });
+        }
 
         ui.add_space(6.0 * s);
 
@@ -238,8 +269,9 @@ fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, 
         .stroke(Stroke::new(1.0, BORDER))
         .corner_radius(corner_radius(4.0 * s))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.set_min_height(36.0 * s);
-            ui.horizontal_centered(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add_space(12.0 * s);
 
                 // Plugin name

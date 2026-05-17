@@ -374,9 +374,9 @@ fn parse_deviation(s: &str) -> Option<f32> {
 /// Format a frequency, switching between Hz and kHz for readability.
 fn format_frequency(val: f32) -> String {
     if val >= 1000.0 {
-        format!("{:.2}", val / 1000.0)
+        format!("{:.2} kHz", val / 1000.0)
     } else {
-        format!("{val:.1}")
+        format!("{val:.1} Hz")
     }
 }
 
@@ -815,8 +815,7 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_value_to_string(Arc::new(format_frequency))
-            .with_string_to_value(Arc::new(parse_frequency))
-            .with_unit(" Hz"),
+            .with_string_to_value(Arc::new(parse_frequency)),
 
             low_cut_r: FloatParam::new(
                 "Low Cut R",
@@ -829,8 +828,7 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_value_to_string(Arc::new(format_frequency))
-            .with_string_to_value(Arc::new(parse_frequency))
-            .with_unit(" Hz"),
+            .with_string_to_value(Arc::new(parse_frequency)),
 
             low_cut_slope_l: FloatParam::new(
                 "Low Cut Slope L",
@@ -871,8 +869,7 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_value_to_string(Arc::new(format_frequency))
-            .with_string_to_value(Arc::new(parse_frequency))
-            .with_unit(" Hz"),
+            .with_string_to_value(Arc::new(parse_frequency)),
 
             high_cut_r: FloatParam::new(
                 "High Cut R",
@@ -885,8 +882,7 @@ impl Default for NebulaStereoDelayParams {
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
             .with_value_to_string(Arc::new(format_frequency))
-            .with_string_to_value(Arc::new(parse_frequency))
-            .with_unit(" Hz"),
+            .with_string_to_value(Arc::new(parse_frequency)),
 
             high_cut_slope_l: FloatParam::new(
                 "High Cut Slope L",
@@ -1478,10 +1474,10 @@ mod tests {
 
     #[test]
     fn format_frequency_values() {
-        assert_eq!(format_frequency(20.0), "20.0");
-        assert_eq!(format_frequency(1000.0), "1.00");
-        assert_eq!(format_frequency(20000.0), "20.00");
-        assert_eq!(format_frequency(440.0), "440.0");
+        assert_eq!(format_frequency(20.0), "20.0 Hz");
+        assert_eq!(format_frequency(1000.0), "1.00 kHz");
+        assert_eq!(format_frequency(20000.0), "20.00 kHz");
+        assert_eq!(format_frequency(440.0), "440.0 Hz");
     }
 
     #[test]
