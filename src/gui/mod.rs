@@ -717,7 +717,7 @@ fn draw_nebula_delay(
     };
 
     painter.text(
-        c.pos(cx, cy - 60.0),
+        c.pos(cx, cy - 64.0),
         Align2::CENTER_CENTER,
         "DELAY TIME",
         c.font(10.0),
