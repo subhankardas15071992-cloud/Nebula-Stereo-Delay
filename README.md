@@ -68,7 +68,7 @@ Click MIDI, click a control, then move a MIDI controller. The next CC maps to th
 The FX bypass crossfades over 512 samples. No clicks. No pops. No hard cuts.
 
 ### Freely Scalable GUI
-Built with egui on macOS and Linux. The window starts at 900x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark Nebula-family theme with cyan, magenta, orange, and purple control accents. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
+Built with egui on macOS and Linux. The window starts at 770x568 and scales as a single fixed-ratio editor surface, so host resizing does not chop controls. DPI-aware on high-resolution displays. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
 
 ---
 
@@ -150,7 +150,7 @@ Input ──► Input Mode Selection ──► ───────────
 |-----------|-------|---------|
 | Routing | 8 modes | Customized |
 | Tempo Sync | Free / Sync | Free |
-| Stereo Link | Unlinked / Linked | Unlinked |
+| Stereo Link | Unlinked / Linked, ratio-preserving L/R adjustments | Unlinked |
 | Output Mix L | 0 – 100 % | 100 % |
 | Output Mix R | 0 – 100 % | 100 % |
 

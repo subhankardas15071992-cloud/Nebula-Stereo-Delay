@@ -37,6 +37,8 @@
 //!
 //! \* Visible only when Tempo Sync is enabled.
 
+#![allow(dead_code, clippy::too_many_arguments)]
+
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -45,7 +47,7 @@ use nih_plug::params::Param;
 use nih_plug::prelude::{Editor, ParamSetter};
 use nih_plug_egui::egui::{
     self, vec2, Align, Align2, Button, Color32, Context, CornerRadius, FontId, Frame, Layout,
-    Painter, Pos2, Rect, Response, ScrollArea, Sense, Shape, Stroke, Ui, UiBuilder,
+    Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, UiBuilder,
 };
 use nih_plug_egui::EguiState;
 
@@ -96,9 +98,31 @@ const ARC_END: f32 = ARC_START + 3.0 * std::f32::consts::FRAC_PI_2;
 const ARC_SWEEP: f32 = ARC_END - ARC_START;
 
 /// Default window width in logical pixels.
-const WIN_W: u32 = 900;
+const WIN_W: u32 = 770;
 /// Default window height in logical pixels.
-const WIN_H: u32 = 700;
+const WIN_H: u32 = 568;
+
+const LOGIC_W: f32 = 770.0;
+const LOGIC_H: f32 = 568.0;
+const TOP_H: f32 = 36.0;
+const FOOT_H: f32 = 34.0;
+const LEFT_W: f32 = 289.0;
+const RIGHT_W: f32 = 289.0;
+const GLOBAL_X: f32 = LEFT_W + RIGHT_W;
+
+const LOGIC_BG: Color32 = Color32::from_rgb(0x21, 0x39, 0x50);
+const LOGIC_BG_ALT: Color32 = Color32::from_rgb(0x1D, 0x34, 0x49);
+const LOGIC_TOP: Color32 = Color32::from_rgb(0x17, 0x17, 0x1A);
+const LOGIC_FOOT: Color32 = Color32::from_rgb(0x23, 0x23, 0x23);
+const LOGIC_LINE: Color32 = Color32::from_rgba_premultiplied(0x80, 0xA7, 0xC5, 0x30);
+const LOGIC_TEXT: Color32 = Color32::from_rgb(0xD9, 0xEE, 0xF8);
+const LOGIC_DIM: Color32 = Color32::from_rgb(0x8E, 0xA3, 0xB4);
+const LOGIC_DISABLED: Color32 = Color32::from_rgb(0x59, 0x6B, 0x7A);
+const LOGIC_TITLE: Color32 = Color32::from_rgb(0x8A, 0xEA, 0xFF);
+const LOGIC_MINT: Color32 = Color32::from_rgb(0x96, 0xF5, 0xB5);
+const LOGIC_BUTTON: Color32 = Color32::from_rgba_premultiplied(0x53, 0x6A, 0x82, 0x55);
+const LOGIC_BUTTON_HOVER: Color32 = Color32::from_rgba_premultiplied(0x72, 0x92, 0xAE, 0x70);
+const LOGIC_BUTTON_ON: Color32 = Color32::from_rgb(0x0F, 0x2A, 0x35);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Editor state
@@ -128,7 +152,7 @@ struct EditorState {
 /// Create the egui editor for the Nebula Stereo Delay plugin.
 ///
 /// Returns `Option<Box<dyn Editor>>` suitable for use in the plugin's
-/// `editor()` method. The window starts at 900 × 700 logical pixels and
+/// `editor()` method. The window starts at 770 × 568 logical pixels and
 /// is freely resizable via the corner drag handle; all elements scale
 /// proportionally with the window size and system DPI.
 pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dyn Editor>> {
@@ -155,7 +179,7 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
             // for window-size coordination.
             let egui_state = state.egui_state.clone();
             nih_plug_egui::resizable_window::ResizableWindow::new("nebula-stereo-delay")
-                .min_size(vec2(600.0, 400.0))
+                .min_size(vec2(560.0, 414.0))
                 .show(ctx, egui_state.as_ref(), |ui| {
                     let root_rect = ui.max_rect();
                     let mut root_ui = ui.new_child(
@@ -173,22 +197,1779 @@ pub fn create_egui_editor(params: Arc<NebulaStereoDelayParams>) -> Option<Box<dy
 fn draw_root(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
     let root_rect = ui.max_rect();
 
-    // Derive a proportional scale factor from the available width.
-    // Reference width = 900 logical px; all sizes are multiplied by `s`.
-    let s = (root_rect.width() / 900.0).clamp(0.72, 1.35);
-
     // Full-background fill.
-    ui.painter().rect_filled(root_rect, 0.0, BG);
+    ui.painter().rect_filled(root_rect, 0.0, LOGIC_TOP);
 
     ui.set_min_size(root_rect.size());
+    draw_logic_editor(ui, state, setter);
+}
 
-    ScrollArea::vertical()
-        .id_salt("nebula_editor_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.set_min_width(root_rect.width());
-            draw_editor_contents(ui, state, setter, s);
-        });
+#[derive(Clone, Copy)]
+struct LogicCanvas {
+    rect: Rect,
+    s: f32,
+}
+
+impl LogicCanvas {
+    fn new(host: Rect) -> Self {
+        let s = (host.width() / LOGIC_W)
+            .min(host.height() / LOGIC_H)
+            .clamp(0.48, 3.0);
+        let rect = Rect::from_center_size(host.center(), vec2(LOGIC_W * s, LOGIC_H * s));
+        Self { rect, s }
+    }
+
+    fn pos(self, x: f32, y: f32) -> Pos2 {
+        Pos2::new(self.rect.min.x + x * self.s, self.rect.min.y + y * self.s)
+    }
+
+    fn rect(self, x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::from_min_size(self.pos(x, y), vec2(w * self.s, h * self.s))
+    }
+
+    fn font(self, size: f32) -> FontId {
+        FontId::proportional(size * self.s)
+    }
+}
+
+fn draw_logic_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>) {
+    let host = ui.max_rect();
+    let c = LogicCanvas::new(host);
+    let painter = ui.painter().clone();
+
+    painter.rect_filled(host, 0.0, LOGIC_TOP);
+    painter.rect_filled(c.rect, 0.0, LOGIC_BG);
+    painter.rect_filled(
+        c.rect(LEFT_W, TOP_H, RIGHT_W, LOGIC_H - TOP_H - FOOT_H),
+        0.0,
+        LOGIC_BG_ALT,
+    );
+    painter.rect_filled(
+        c.rect(
+            GLOBAL_X,
+            TOP_H,
+            LOGIC_W - GLOBAL_X,
+            LOGIC_H - TOP_H - FOOT_H,
+        ),
+        0.0,
+        LOGIC_BG,
+    );
+    painter.rect_filled(c.rect(0.0, 0.0, LOGIC_W, TOP_H), 0.0, LOGIC_TOP);
+    painter.rect_filled(
+        c.rect(0.0, LOGIC_H - FOOT_H, LOGIC_W, FOOT_H),
+        0.0,
+        LOGIC_FOOT,
+    );
+
+    for x in [LEFT_W, GLOBAL_X] {
+        painter.line_segment(
+            [c.pos(x, TOP_H), c.pos(x, LOGIC_H - FOOT_H)],
+            Stroke::new(1.0 * c.s, LOGIC_LINE),
+        );
+    }
+    painter.line_segment(
+        [c.pos(GLOBAL_X, 274.0), c.pos(LOGIC_W, 274.0)],
+        Stroke::new(1.0 * c.s, LOGIC_LINE),
+    );
+
+    draw_logic_command_bar(ui, state, setter, c);
+    draw_logic_channel(ui, state, setter, c, Channel::Left, 0.0);
+    draw_logic_channel(ui, state, setter, c, Channel::Right, LEFT_W);
+    draw_logic_global(ui, state, setter, c);
+
+    painter.text(
+        c.pos(LOGIC_W * 0.5, LOGIC_H - 14.0),
+        Align2::CENTER_CENTER,
+        "Stereo Delay",
+        c.font(20.0),
+        Color32::WHITE,
+    );
+}
+
+fn draw_logic_command_bar(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+) {
+    let painter = ui.painter().clone();
+    painter.text(
+        c.pos(16.0, 18.0),
+        Align2::LEFT_CENTER,
+        "NEBULA STEREO DELAY",
+        c.font(13.0),
+        LOGIC_TITLE,
+    );
+    painter.text(
+        c.pos(154.0, 18.0),
+        Align2::LEFT_CENTER,
+        "v1.0",
+        c.font(9.0),
+        LOGIC_DIM,
+    );
+
+    logic_preset_button(ui, state, setter, c, c.rect(210.0, 7.0, 76.0, 22.0));
+    logic_ab_button(ui, state, setter, c, c.rect(294.0, 7.0, 58.0, 22.0));
+    logic_undo_button(ui, state, setter, c, c.rect(360.0, 7.0, 54.0, 22.0));
+    logic_redo_button(ui, state, setter, c, c.rect(420.0, 7.0, 54.0, 22.0));
+    logic_midi_button(ui, state, c, c.rect(486.0, 7.0, 70.0, 22.0));
+
+    let bypassed = state.params.bypass.load(Ordering::Relaxed);
+    let resp = logic_button(
+        ui,
+        c,
+        c.rect(566.0, 7.0, 64.0, 22.0),
+        if bypassed { "FX OFF" } else { "FX ON" },
+        !bypassed,
+        "top_fx",
+    );
+    if resp.clicked() {
+        state.params.bypass.store(!bypassed, Ordering::Relaxed);
+    }
+}
+
+fn draw_logic_channel(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    x: f32,
+) {
+    let painter = ui.painter().clone();
+    let params = state.params.clone();
+    let title = if ch == Channel::Left {
+        "LEFT DELAY"
+    } else {
+        "RIGHT DELAY"
+    };
+    let id = if ch == Channel::Left { "l" } else { "r" };
+
+    painter.text(
+        c.pos(x + LEFT_W * 0.5, 52.0),
+        Align2::CENTER_CENTER,
+        title,
+        c.font(20.0),
+        LOGIC_TITLE,
+    );
+
+    let input_param = if ch == Channel::Left {
+        &params.input_mode_l
+    } else {
+        &params.input_mode_r
+    };
+    logic_label_value(
+        &painter,
+        c,
+        x + 36.0,
+        96.0,
+        "Input",
+        enum_name(input_param.value()),
+        Align2::LEFT_CENTER,
+        true,
+    );
+    logic_input_dropdown(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 31.0, 102.0, 58.0, 24.0),
+        ch,
+    );
+
+    draw_logic_delay(ui, state, setter, c, ch, x + 145.0, id);
+    draw_logic_filters(ui, state, setter, c, ch, x, id);
+
+    let feedback = if ch == Channel::Left {
+        &params.feedback_l
+    } else {
+        &params.feedback_r
+    };
+    logic_label_value(
+        &painter,
+        c,
+        x + 86.0,
+        353.0,
+        "Feedback",
+        &format!("{:.0}%", feedback.value() * 100.0),
+        Align2::CENTER_CENTER,
+        true,
+    );
+    logic_float_knob(
+        ui,
+        state,
+        setter,
+        c,
+        feedback,
+        x + 86.0,
+        410.0,
+        27.0,
+        LOGIC_MINT,
+        &format!("{id}_feedback"),
+    );
+
+    let fb_phase = if ch == Channel::Left {
+        &params.feedback_phase_l
+    } else {
+        &params.feedback_phase_r
+    };
+    painter.text(
+        c.pos(x + 86.0, 469.0),
+        Align2::CENTER_CENTER,
+        "Phase",
+        c.font(11.0),
+        LOGIC_DIM,
+    );
+    logic_phase_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 77.0, 478.0, 26.0, 22.0),
+        fb_phase,
+        &format!("{id}_fb_phase"),
+    );
+
+    let (cf, cf_phase, cf_text) = if ch == Channel::Left {
+        (
+            &params.crossfeed_lr,
+            &params.crossfeed_phase_lr,
+            "Crossfeed\nLeft to Right",
+        )
+    } else {
+        (
+            &params.crossfeed_rl,
+            &params.crossfeed_phase_rl,
+            "Crossfeed\nRight to Left",
+        )
+    };
+    logic_label_value_multiline(
+        &painter,
+        c,
+        x + 207.0,
+        348.0,
+        cf_text,
+        &format!("{:.0}%", cf.value() * 100.0),
+    );
+    logic_float_knob(
+        ui,
+        state,
+        setter,
+        c,
+        cf,
+        x + 207.0,
+        410.0,
+        27.0,
+        LOGIC_MINT,
+        &format!("{id}_crossfeed"),
+    );
+    painter.text(
+        c.pos(x + 207.0, 469.0),
+        Align2::CENTER_CENTER,
+        "Phase",
+        c.font(11.0),
+        LOGIC_DIM,
+    );
+    logic_phase_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 194.0, 478.0, 26.0, 22.0),
+        cf_phase,
+        &format!("{id}_cf_phase"),
+    );
+}
+
+fn draw_logic_delay(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    cx: f32,
+    id: &str,
+) {
+    let painter = ui.painter().clone();
+    let params = state.params.clone();
+    let synced = params.tempo_sync.value();
+    let delay = if ch == Channel::Left {
+        &params.delay_time_l
+    } else {
+        &params.delay_time_r
+    };
+    let note = if ch == Channel::Left {
+        &params.note_l
+    } else {
+        &params.note_r
+    };
+    let deviation = if ch == Channel::Left {
+        &params.deviation_l
+    } else {
+        &params.deviation_r
+    };
+
+    let value = if synced {
+        format!("{:.0} ms", synced_delay_ms(note.value(), deviation.value()))
+    } else {
+        format!("{:.0} ms", delay.value() * 1000.0)
+    };
+    logic_label_value(
+        &painter,
+        c,
+        cx,
+        98.0,
+        "Delay Time",
+        &value,
+        Align2::CENTER_CENTER,
+        !synced,
+    );
+
+    let note_value = enum_name(note.value()).replace('T', " triplet");
+    logic_label_value(
+        &painter,
+        c,
+        cx + 92.0,
+        98.0,
+        "Note",
+        &note_value,
+        Align2::CENTER_CENTER,
+        synced,
+    );
+    if synced {
+        logic_note_dropdown(
+            ui,
+            state,
+            setter,
+            c,
+            c.rect(cx + 54.0, 102.0, 80.0, 24.0),
+            ch,
+        );
+    }
+
+    logic_label_value(
+        &painter,
+        c,
+        cx + 94.0,
+        148.0,
+        "Deviation",
+        &format!("{:+.1} ct", deviation.value()),
+        Align2::CENTER_CENTER,
+        synced,
+    );
+    logic_float_value_box(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(cx + 62.0, 154.0, 70.0, 22.0),
+        deviation,
+        &format!("{id}_deviation"),
+        synced,
+    );
+
+    logic_delay_knob(
+        ui,
+        state,
+        setter,
+        c,
+        ch,
+        cx,
+        174.0,
+        34.0,
+        &format!("{id}_delay"),
+    );
+    logic_delay_scale_button(
+        ui,
+        state,
+        setter,
+        c,
+        ch,
+        c.rect(cx - 36.0, 215.0, 27.0, 21.0),
+        0.5,
+        ":2",
+        &format!("{id}_halve"),
+    );
+    logic_delay_scale_button(
+        ui,
+        state,
+        setter,
+        c,
+        ch,
+        c.rect(cx + 11.0, 215.0, 27.0, 21.0),
+        2.0,
+        "x2",
+        &format!("{id}_double"),
+    );
+}
+
+fn draw_logic_filters(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    x: f32,
+    id: &str,
+) {
+    let painter = ui.painter().clone();
+    let params = state.params.clone();
+    let low = if ch == Channel::Left {
+        &params.low_cut_l
+    } else {
+        &params.low_cut_r
+    };
+    let high = if ch == Channel::Left {
+        &params.high_cut_l
+    } else {
+        &params.high_cut_r
+    };
+    let low_slope = if ch == Channel::Left {
+        &params.low_cut_slope_l
+    } else {
+        &params.low_cut_slope_r
+    };
+    let high_slope = if ch == Channel::Left {
+        &params.high_cut_slope_l
+    } else {
+        &params.high_cut_slope_r
+    };
+
+    logic_label_value(
+        &painter,
+        c,
+        x + 67.0,
+        258.0,
+        "Low Cut",
+        &format_freq_hz(low.value()),
+        Align2::CENTER_CENTER,
+        true,
+    );
+    logic_label_value(
+        &painter,
+        c,
+        x + 225.0,
+        258.0,
+        "High Cut",
+        &format_freq_hz(high.value()),
+        Align2::CENTER_CENTER,
+        true,
+    );
+
+    let y = 296.0;
+    let x1 = x + 67.0;
+    let x2 = x + 226.0;
+    painter.line_segment(
+        [c.pos(x1, y), c.pos(x2, y)],
+        Stroke::new(2.0 * c.s, LOGIC_MINT),
+    );
+    logic_filter_handle(
+        ui,
+        state,
+        setter,
+        c,
+        low,
+        x1,
+        x2,
+        y,
+        &format!("{id}_low_cut"),
+    );
+    logic_filter_handle(
+        ui,
+        state,
+        setter,
+        c,
+        high,
+        x1,
+        x2,
+        y,
+        &format!("{id}_high_cut"),
+    );
+
+    logic_float_value_box(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 32.0, 314.0, 72.0, 20.0),
+        low_slope,
+        &format!("{id}_low_slope"),
+        true,
+    );
+    logic_float_value_box(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(x + 190.0, 314.0, 72.0, 20.0),
+        high_slope,
+        &format!("{id}_high_slope"),
+        true,
+    );
+}
+
+fn draw_logic_global(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+) {
+    let painter = ui.painter().clone();
+    painter.text(
+        c.pos(GLOBAL_X + 96.0, 52.0),
+        Align2::CENTER_CENTER,
+        "GLOBAL",
+        c.font(20.0),
+        LOGIC_TITLE,
+    );
+    logic_label_value(
+        &painter,
+        c,
+        GLOBAL_X + 96.0,
+        98.0,
+        "Routing",
+        enum_name(state.params.routing.value()),
+        Align2::CENTER_CENTER,
+        true,
+    );
+    logic_routing_dropdown(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(GLOBAL_X + 55.0, 102.0, 82.0, 24.0),
+    );
+
+    painter.text(
+        c.pos(GLOBAL_X + 96.0, 146.0),
+        Align2::CENTER_CENTER,
+        "Tempo Sync",
+        c.font(11.0),
+        LOGIC_DIM,
+    );
+    let params = state.params.clone();
+    logic_bool_icon_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(GLOBAL_X + 83.0, 156.0, 27.0, 23.0),
+        &params.tempo_sync,
+        "♪",
+        "tempo_sync",
+    );
+
+    painter.text(
+        c.pos(GLOBAL_X + 96.0, 196.0),
+        Align2::CENTER_CENTER,
+        "Stereo Link",
+        c.font(11.0),
+        LOGIC_DIM,
+    );
+    logic_bool_icon_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(GLOBAL_X + 83.0, 206.0, 27.0, 23.0),
+        &params.stereo_link,
+        "↔",
+        "stereo_link",
+    );
+
+    painter.text(
+        c.pos(GLOBAL_X + 96.0, 294.0),
+        Align2::CENTER_CENTER,
+        "OUTPUT MIX",
+        c.font(20.0),
+        LOGIC_TITLE,
+    );
+    logic_output_slider(
+        ui,
+        state,
+        setter,
+        c,
+        &params.output_mix_l,
+        GLOBAL_X + 61.0,
+        "Left",
+        "output_l",
+    );
+    logic_output_slider(
+        ui,
+        state,
+        setter,
+        c,
+        &params.output_mix_r,
+        GLOBAL_X + 136.0,
+        "Right",
+        "output_r",
+    );
+}
+
+fn logic_label_value(
+    painter: &Painter,
+    c: LogicCanvas,
+    x: f32,
+    y: f32,
+    label: &str,
+    value: &str,
+    align: Align2,
+    enabled: bool,
+) {
+    let color = if enabled { LOGIC_MINT } else { LOGIC_DISABLED };
+    painter.text(c.pos(x, y), align, label, c.font(11.0), LOGIC_DIM);
+    painter.text(c.pos(x, y + 17.0), align, value, c.font(14.0), color);
+}
+
+fn logic_label_value_multiline(
+    painter: &Painter,
+    c: LogicCanvas,
+    x: f32,
+    y: f32,
+    label: &str,
+    value: &str,
+) {
+    let mut line_y = y;
+    for line in label.lines() {
+        painter.text(
+            c.pos(x, line_y),
+            Align2::CENTER_CENTER,
+            line,
+            c.font(11.0),
+            LOGIC_DIM,
+        );
+        line_y += 12.0;
+    }
+    painter.text(
+        c.pos(x, y + 25.0),
+        Align2::CENTER_CENTER,
+        value,
+        c.font(14.0),
+        LOGIC_MINT,
+    );
+}
+
+fn logic_button(
+    ui: &mut Ui,
+    c: LogicCanvas,
+    rect: Rect,
+    label: &str,
+    active: bool,
+    id: &str,
+) -> Response {
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click());
+    let fill = if active {
+        LOGIC_BUTTON_ON
+    } else if resp.hovered() {
+        LOGIC_BUTTON_HOVER
+    } else {
+        LOGIC_BUTTON
+    };
+    ui.painter()
+        .rect_filled(rect, corner_radius(4.0 * c.s), fill);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        c.font(11.0),
+        if active { LOGIC_MINT } else { LOGIC_DIM },
+    );
+    resp
+}
+
+fn logic_float_knob(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    param: &nih_plug::params::FloatParam,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    accent: Color32,
+    id: &str,
+) {
+    let rect = Rect::from_center_size(c.pos(cx, cy), vec2((r * 2.4) * c.s, (r * 2.4) * c.s));
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    logic_float_interaction(ui, state, setter, param, &resp, r);
+    draw_logic_knob_visual(
+        ui.painter(),
+        c,
+        cx,
+        cy,
+        r,
+        param.modulated_normalized_value(),
+        accent,
+    );
+    let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_delay_knob(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    id: &str,
+) {
+    let params = state.params.clone();
+    let synced = params.tempo_sync.value();
+    let delay = if ch == Channel::Left {
+        &params.delay_time_l
+    } else {
+        &params.delay_time_r
+    };
+    let note = if ch == Channel::Left {
+        &params.note_l
+    } else {
+        &params.note_r
+    };
+    let dev = if ch == Channel::Left {
+        &params.deviation_l
+    } else {
+        &params.deviation_r
+    };
+    let rect = Rect::from_center_size(c.pos(cx, cy), vec2((r * 2.8) * c.s, (r * 2.8) * c.s));
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    let norm = if synced {
+        sync_knob_normalized(note.value(), dev.value())
+    } else {
+        delay.modulated_normalized_value()
+    };
+
+    if resp.drag_started() {
+        state.params.push_undo();
+        if synced {
+            logic_begin_sync_gesture(
+                setter,
+                &state.params,
+                ch,
+                stereo_link_active(ui, &state.params),
+            );
+        } else {
+            setter.begin_set_parameter(delay);
+            if stereo_link_active(ui, &state.params) {
+                if let Some(other) = linked_float_counterpart(&state.params, delay.name()) {
+                    setter.begin_set_parameter(other);
+                }
+            }
+        }
+    }
+    if resp.dragged() {
+        let delta = -ui.input(|i| i.pointer.delta().y) / ((r * 2.3).max(1.0) * c.s);
+        if synced {
+            let new_norm =
+                (sync_knob_normalized(note.value(), dev.value()) + delta).clamp(0.0, 1.0);
+            logic_set_sync_norm(
+                ui,
+                state,
+                setter,
+                ch,
+                new_norm,
+                delta,
+                stereo_link_active(ui, &state.params),
+            );
+        } else {
+            logic_set_float_norm_relative(
+                ui,
+                state,
+                setter,
+                delay,
+                (delay.modulated_normalized_value() + delta).clamp(0.0, 1.0),
+                delta,
+            );
+        }
+    }
+    if resp.drag_stopped() {
+        if synced {
+            logic_end_sync_gesture(
+                setter,
+                &state.params,
+                ch,
+                stereo_link_active(ui, &state.params),
+            );
+        } else {
+            setter.end_set_parameter(delay);
+            if stereo_link_active(ui, &state.params) {
+                if let Some(other) = linked_float_counterpart(&state.params, delay.name()) {
+                    setter.end_set_parameter(other);
+                }
+            }
+        }
+    }
+    if resp.double_clicked() {
+        state.params.push_undo();
+        if synced {
+            logic_set_note_absolute(ui, state, setter, ch, NoteValueParam::Quarter, 0.0, true);
+        } else {
+            setter.begin_set_parameter(delay);
+            setter.set_parameter(delay, delay.default_plain_value());
+            setter.end_set_parameter(delay);
+        }
+    }
+
+    if synced {
+        draw_logic_note_ring(ui.painter(), c, cx, cy, r + 14.0);
+    }
+    let norm = if synced {
+        sync_knob_normalized(note.value(), dev.value())
+    } else {
+        norm
+    };
+    draw_logic_knob_visual(ui.painter(), c, cx, cy, r, norm, LOGIC_MINT);
+    let resp = resp.on_hover_text(if synced {
+        "Tempo-synced delay"
+    } else {
+        "Delay time"
+    });
+    add_midi_learn_menu(ui, &resp, &param_id_for(delay.name()), state);
+}
+
+fn draw_logic_knob_visual(
+    painter: &Painter,
+    c: LogicCanvas,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    norm: f32,
+    accent: Color32,
+) {
+    let center = c.pos(cx, cy);
+    let radius = r * c.s;
+    painter.circle_filled(center, radius, Color32::from_rgb(0x2C, 0x41, 0x52));
+    painter.circle_stroke(center, radius, Stroke::new(2.2 * c.s, Color32::BLACK));
+    draw_arc_line(
+        painter,
+        center,
+        radius + 1.5 * c.s,
+        ARC_START,
+        ARC_END,
+        Stroke::new(4.0 * c.s, Color32::from_rgb(0x0E, 0x18, 0x22)),
+    );
+    draw_arc_line(
+        painter,
+        center,
+        radius + 1.5 * c.s,
+        ARC_START,
+        ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0),
+        Stroke::new(4.0 * c.s, accent),
+    );
+    let angle = ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0);
+    let p2 = center + vec2(angle.cos() * radius * 0.78, angle.sin() * radius * 0.78);
+    painter.line_segment([center, p2], Stroke::new(1.5 * c.s, accent));
+}
+
+fn draw_logic_note_ring(painter: &Painter, c: LogicCanvas, cx: f32, cy: f32, r: f32) {
+    let marks = ["♪", "·", "♪", "·", "♩", "·", "♩", "·", "♪", "·", "♩", "·"];
+    let center = c.pos(cx, cy);
+    for (idx, mark) in marks.iter().enumerate() {
+        let t = idx as f32 / marks.len() as f32;
+        let angle = ARC_START + ARC_SWEEP * t;
+        let pos = center + vec2(angle.cos() * r * c.s, angle.sin() * r * c.s);
+        painter.text(
+            pos,
+            Align2::CENTER_CENTER,
+            *mark,
+            c.font(if *mark == "·" { 13.0 } else { 11.0 }),
+            if *mark == "·" { LOGIC_DIM } else { LOGIC_TEXT },
+        );
+    }
+}
+
+fn logic_float_interaction(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::FloatParam,
+    resp: &Response,
+    radius: f32,
+) {
+    let link = stereo_link_active(ui, &state.params);
+    if resp.drag_started() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        if link {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.begin_set_parameter(other);
+            }
+        }
+    }
+    if resp.dragged() {
+        let delta = -ui.input(|i| i.pointer.delta().y) / ((radius * 2.7).max(1.0) * 1.0);
+        logic_set_float_norm_relative(
+            ui,
+            state,
+            setter,
+            param,
+            (param.modulated_normalized_value() + delta).clamp(0.0, 1.0),
+            delta,
+        );
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(param);
+        if link {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.end_set_parameter(other);
+            }
+        }
+    }
+    if resp.double_clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, param.default_plain_value());
+        setter.end_set_parameter(param);
+    }
+}
+
+fn logic_set_float_norm_relative(
+    ui: &Ui,
+    state: &EditorState,
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::FloatParam,
+    new_norm: f32,
+    delta_norm: f32,
+) {
+    let old_plain = param.value();
+    let new_plain = param.preview_plain(new_norm);
+    setter.set_parameter(param, new_plain);
+    if stereo_link_active(ui, &state.params) {
+        if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+            let other_norm = linked_float_target_norm(other, old_plain, new_plain, delta_norm);
+            setter.set_parameter(other, other.preview_plain(other_norm));
+        }
+    }
+}
+
+fn linked_float_target_norm(
+    other: &nih_plug::params::FloatParam,
+    old_plain: f32,
+    new_plain: f32,
+    delta_norm: f32,
+) -> f32 {
+    let other_plain = other.value();
+    if old_plain > 0.000_001
+        && new_plain >= 0.0
+        && other_plain >= 0.0
+        && old_plain.is_finite()
+        && new_plain.is_finite()
+        && other_plain.is_finite()
+    {
+        let ratio = (new_plain / old_plain).clamp(0.0, 1000.0);
+        other.preview_normalized(other_plain * ratio)
+    } else {
+        (other.modulated_normalized_value() + delta_norm).clamp(0.0, 1.0)
+    }
+}
+
+fn logic_filter_handle(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    param: &nih_plug::params::FloatParam,
+    x1: f32,
+    x2: f32,
+    y: f32,
+    id: &str,
+) {
+    let norm = param.modulated_normalized_value();
+    let x = x1 + (x2 - x1) * norm;
+    let handle = c.rect(x - 4.0, y - 11.0, 8.0, 22.0);
+    let hit = c.rect(x - 12.0, y - 14.0, 24.0, 28.0);
+    let resp = ui.interact(hit, ui.id().with(id), Sense::click_and_drag());
+    if resp.drag_started() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        if stereo_link_active(ui, &state.params) {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.begin_set_parameter(other);
+            }
+        }
+    }
+    if (resp.dragged() || resp.clicked()) && ui.input(|i| i.pointer.interact_pos()).is_some() {
+        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            let next = ((pos.x - c.pos(x1, y).x) / ((x2 - x1) * c.s)).clamp(0.0, 1.0);
+            logic_set_float_norm_relative(ui, state, setter, param, next, next - norm);
+        }
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(param);
+        if stereo_link_active(ui, &state.params) {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.end_set_parameter(other);
+            }
+        }
+    }
+    ui.painter().rect_filled(handle, 0.0, LOGIC_MINT);
+    let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_output_slider(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    param: &nih_plug::params::FloatParam,
+    x: f32,
+    label: &str,
+    id: &str,
+) {
+    let painter = ui.painter().clone();
+    painter.text(
+        c.pos(x, 340.0),
+        Align2::CENTER_CENTER,
+        label,
+        c.font(11.0),
+        LOGIC_DIM,
+    );
+    painter.text(
+        c.pos(x, 357.0),
+        Align2::CENTER_CENTER,
+        format!("{:.0}%", param.value() * 100.0),
+        c.font(14.0),
+        LOGIC_MINT,
+    );
+    let top = 371.0;
+    let bottom = 502.0;
+    painter.line_segment(
+        [c.pos(x, top), c.pos(x, bottom)],
+        Stroke::new(2.0 * c.s, Color32::BLACK),
+    );
+    let norm = param.modulated_normalized_value();
+    let y = bottom - (bottom - top) * norm;
+    painter.line_segment(
+        [c.pos(x, y), c.pos(x, bottom)],
+        Stroke::new(2.0 * c.s, LOGIC_MINT),
+    );
+    let handle = c.rect(x - 10.0, y - 3.0, 20.0, 6.0);
+    painter.rect_stroke(
+        handle,
+        corner_radius(1.0 * c.s),
+        Stroke::new(1.0 * c.s, LOGIC_DIM),
+        egui::StrokeKind::Outside,
+    );
+    painter.rect_filled(c.rect(x - 7.0, y - 1.0, 14.0, 2.0), 0.0, LOGIC_MINT);
+    let hit = c.rect(x - 18.0, top - 8.0, 36.0, bottom - top + 16.0);
+    let resp = ui.interact(hit, ui.id().with(id), Sense::click_and_drag());
+    if resp.drag_started() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        if stereo_link_active(ui, &state.params) {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.begin_set_parameter(other);
+            }
+        }
+    }
+    if (resp.dragged() || resp.clicked()) && ui.input(|i| i.pointer.interact_pos()).is_some() {
+        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            let next = (1.0 - ((pos.y - c.pos(x, top).y) / ((bottom - top) * c.s))).clamp(0.0, 1.0);
+            logic_set_float_norm_relative(ui, state, setter, param, next, next - norm);
+        }
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(param);
+        if stereo_link_active(ui, &state.params) {
+            if let Some(other) = linked_float_counterpart(&state.params, param.name()) {
+                setter.end_set_parameter(other);
+            }
+        }
+    }
+    let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_float_value_box(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::FloatParam,
+    id: &str,
+    enabled: bool,
+) {
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    let fill = if enabled && resp.hovered() {
+        LOGIC_BUTTON_HOVER
+    } else {
+        Color32::from_rgba_premultiplied(0x20, 0x34, 0x47, if enabled { 0x58 } else { 0x25 })
+    };
+    ui.painter()
+        .rect_filled(rect, corner_radius(4.0 * c.s), fill);
+    let text = if param.name().contains("Slope") {
+        format!("{:.0} dB/oct", param.value())
+    } else {
+        param.to_string()
+    };
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        text,
+        c.font(10.0),
+        if enabled { LOGIC_DIM } else { LOGIC_DISABLED },
+    );
+    if enabled {
+        logic_float_interaction(ui, state, setter, param, &resp, 30.0);
+    }
+    let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_phase_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::BoolParam,
+    id: &str,
+) {
+    let resp = logic_button(ui, c, rect, "Φ", param.value(), id);
+    if resp.clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, !param.value());
+        setter.end_set_parameter(param);
+        if stereo_link_active(ui, &state.params) {
+            if let Some(other) = linked_bool_counterpart(&state.params, param.name()) {
+                setter.begin_set_parameter(other);
+                setter.set_parameter(other, !other.value());
+                setter.end_set_parameter(other);
+            }
+        }
+    }
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_bool_icon_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::BoolParam,
+    label: &str,
+    id: &str,
+) {
+    let resp = logic_button(ui, c, rect, label, param.value(), id);
+    if resp.clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, !param.value());
+        setter.end_set_parameter(param);
+    }
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_delay_scale_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    ch: Channel,
+    rect: Rect,
+    factor: f32,
+    label: &str,
+    id: &str,
+) {
+    let resp = logic_button(ui, c, rect, label, false, id);
+    if resp.clicked() {
+        state.params.push_undo();
+        apply_delay_scale(ui, state, setter, ch, factor);
+    }
+}
+
+fn logic_preset_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+) {
+    let resp = logic_button(ui, c, rect, "Preset", false, "logic_preset");
+    let popup_id = ui.id().with("logic_preset_popup");
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    egui::popup::popup_above_or_below_widget(
+        ui,
+        popup_id,
+        &resp,
+        egui::AboveOrBelow::Below,
+        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            Frame::NONE
+                .fill(LOGIC_BG_ALT)
+                .stroke(Stroke::new(1.0, LOGIC_LINE))
+                .show(ui, |ui| {
+                    ui.set_min_width(240.0 * c.s);
+                    ui.label(rich("Save", 10.0 * c.s).color(LOGIC_TITLE).strong());
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.preset_name)
+                                .desired_width(130.0 * c.s)
+                                .font(egui::TextStyle::Small),
+                        );
+                        if ui.button("Current").clicked() {
+                            let values = preset_values_from_params(&state.params);
+                            state.preset_status = match state.preset_manager.save_user_preset(
+                                &state.preset_name,
+                                "Nebula User",
+                                &values,
+                            ) {
+                                Ok(()) => Some(format!("Saved {}", state.preset_name)),
+                                Err(err) => Some(err),
+                            };
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Save A").clicked() {
+                            if let Ok(snapshots) = state.params.ab_snapshots.read() {
+                                let values = preset_values_from_snapshot(&snapshots.a);
+                                state.preset_status = match state.preset_manager.save_user_preset(
+                                    &format!("{} A", state.preset_name),
+                                    "Nebula User",
+                                    &values,
+                                ) {
+                                    Ok(()) => Some(format!("Saved {} A", state.preset_name)),
+                                    Err(err) => Some(err),
+                                };
+                            }
+                        }
+                        if ui.button("Save B").clicked() {
+                            if let Ok(snapshots) = state.params.ab_snapshots.read() {
+                                let values = preset_values_from_snapshot(&snapshots.b);
+                                state.preset_status = match state.preset_manager.save_user_preset(
+                                    &format!("{} B", state.preset_name),
+                                    "Nebula User",
+                                    &values,
+                                ) {
+                                    Ok(()) => Some(format!("Saved {} B", state.preset_name)),
+                                    Err(err) => Some(err),
+                                };
+                            }
+                        }
+                    });
+                    if let Some(status) = &state.preset_status {
+                        ui.label(rich(status, 9.0 * c.s).color(LOGIC_DIM));
+                    }
+                    ui.separator();
+                    ui.label(rich("Factory", 10.0 * c.s).color(LOGIC_TITLE).strong());
+                    let factory = state.preset_manager.factory_presets().to_vec();
+                    for preset in factory {
+                        if ui.button(&preset.name).clicked() {
+                            state.params.push_undo();
+                            state
+                                .preset_manager
+                                .load_preset(&preset, &state.params, setter);
+                            state.preset_status = Some(format!("Loaded {}", preset.name));
+                            ui.memory_mut(|m| m.close_popup());
+                        }
+                    }
+                    ui.separator();
+                    ui.label(rich("User", 10.0 * c.s).color(LOGIC_TITLE).strong());
+                    match state.preset_manager.user_presets() {
+                        Ok(user_presets) if user_presets.is_empty() => {
+                            ui.label(rich("No user presets", 9.0 * c.s).color(LOGIC_DIM));
+                        }
+                        Ok(user_presets) => {
+                            for preset in user_presets {
+                                if ui.button(&preset.name).clicked() {
+                                    state.params.push_undo();
+                                    state.preset_manager.load_preset(
+                                        &preset,
+                                        &state.params,
+                                        setter,
+                                    );
+                                    state.preset_status = Some(format!("Loaded {}", preset.name));
+                                    ui.memory_mut(|m| m.close_popup());
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            ui.label(rich(err, 9.0 * c.s).color(DANGER));
+                        }
+                    }
+                });
+        },
+    );
+}
+
+fn logic_ab_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+) {
+    let slot = state.params.ab_state.load(Ordering::Relaxed);
+    let label = if slot == 0 { "A/B [A]" } else { "A/B [B]" };
+    let resp = logic_button(ui, c, rect, label, slot == 1, "logic_ab");
+    if resp.clicked() {
+        state.params.push_undo();
+        let snapshot = state.params.ab_toggle();
+        apply_snapshot(&state.params, setter, &snapshot);
+    }
+}
+
+fn logic_undo_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+) {
+    let resp = logic_button(ui, c, rect, "Undo", false, "logic_undo");
+    if resp.clicked() {
+        let current = take_snapshot(&state.params);
+        if let Ok(mut stack) = state.params.undo_stack.write() {
+            if let Some(prev) = stack.undo(current) {
+                apply_snapshot(&state.params, setter, &prev);
+            }
+        }
+    }
+}
+
+fn logic_redo_button(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+) {
+    let resp = logic_button(ui, c, rect, "Redo", false, "logic_redo");
+    if resp.clicked() {
+        let current = take_snapshot(&state.params);
+        if let Ok(mut stack) = state.params.undo_stack.write() {
+            if let Some(next) = stack.redo(current) {
+                apply_snapshot(&state.params, setter, &next);
+            }
+        }
+    }
+}
+
+fn logic_midi_button(ui: &mut Ui, state: &mut EditorState, c: LogicCanvas, rect: Rect) {
+    let learning = state.midi_learn_active
+        || state
+            .params
+            .midi_learn
+            .read()
+            .map(|ml| ml.is_learning())
+            .unwrap_or(false);
+    let resp = logic_button(
+        ui,
+        c,
+        rect,
+        if learning { "MIDI..." } else { "MIDI" },
+        learning,
+        "logic_midi",
+    );
+    if resp.clicked() {
+        state.midi_learn_active = !state.midi_learn_active;
+        if !state.midi_learn_active {
+            state.midi_learn_target = None;
+            if let Ok(mut ml) = state.params.midi_learn.write() {
+                ml.stop_learn();
+            }
+        }
+    }
+    resp.context_menu(|ui| {
+        if let Ok(mut ml) = state.params.midi_learn.write() {
+            if ui
+                .button(if ml.is_global_enabled() {
+                    "MIDI Off"
+                } else {
+                    "MIDI On"
+                })
+                .clicked()
+            {
+                ml.toggle_global_enabled();
+                ui.close_menu();
+            }
+            ui.separator();
+            ui.label("Clean Up");
+            let mappings = ml.mappings().to_vec();
+            for mapping in mappings {
+                if ui
+                    .button(format!(
+                        "{}  Ch {} CC {}",
+                        mapping.param_id, mapping.channel, mapping.cc
+                    ))
+                    .clicked()
+                {
+                    ml.clean_up(&mapping.param_id);
+                    ui.close_menu();
+                }
+            }
+            if ui.button("Clear All").clicked() {
+                ml.clear_all();
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Roll Back").clicked() {
+                ml.roll_back();
+                ui.close_menu();
+            }
+            if ui.button("Save").clicked() {
+                ml.save_for_rollback();
+                ui.close_menu();
+            }
+        }
+    });
+}
+
+fn logic_input_dropdown(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    ch: Channel,
+) {
+    let params = state.params.clone();
+    let param = if ch == Channel::Left {
+        &params.input_mode_l
+    } else {
+        &params.input_mode_r
+    };
+    let resp = logic_button(
+        ui,
+        c,
+        rect,
+        &format!("{} ˅", enum_name(param.value())),
+        false,
+        if ch == Channel::Left {
+            "logic_input_l"
+        } else {
+            "logic_input_r"
+        },
+    );
+    let popup_id = ui.id().with(if ch == Channel::Left {
+        "logic_input_l_popup"
+    } else {
+        "logic_input_r_popup"
+    });
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    let variants = [
+        (InputModeParam::Off, "Off"),
+        (InputModeParam::Left, "Left"),
+        (InputModeParam::Right, "Right"),
+        (InputModeParam::LeftPlusRight, "L+R"),
+        (InputModeParam::LeftMinusRight, "L-R"),
+    ];
+    logic_enum_popup(ui, c, popup_id, &resp, |ui| {
+        for (variant, name) in variants {
+            if ui.button(name).clicked() {
+                state.params.push_undo();
+                setter.begin_set_parameter(param);
+                setter.set_parameter(param, variant);
+                setter.end_set_parameter(param);
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+    });
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_note_dropdown(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    ch: Channel,
+) {
+    let params = state.params.clone();
+    let param = if ch == Channel::Left {
+        &params.note_l
+    } else {
+        &params.note_r
+    };
+    let current = enum_name(param.value()).replace('T', " triplet");
+    let resp = logic_button(
+        ui,
+        c,
+        rect,
+        &format!("{current} ˅"),
+        false,
+        if ch == Channel::Left {
+            "logic_note_l"
+        } else {
+            "logic_note_r"
+        },
+    );
+    let popup_id = ui.id().with(if ch == Channel::Left {
+        "logic_note_l_popup"
+    } else {
+        "logic_note_r_popup"
+    });
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    logic_enum_popup(ui, c, popup_id, &resp, |ui| {
+        for (variant, name) in note_variants() {
+            if ui.button(name).clicked() {
+                logic_set_note_preserve_offset(ui, state, setter, ch, variant, false);
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+    });
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_routing_dropdown(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+) {
+    let params = state.params.clone();
+    let param = &params.routing;
+    let resp = logic_button(
+        ui,
+        c,
+        rect,
+        &format!("{} ˅", enum_name(param.value())),
+        false,
+        "logic_routing",
+    );
+    let popup_id = ui.id().with("logic_routing_popup");
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    let modes = [
+        (RoutingModeParam::Customized, "Customized"),
+        (RoutingModeParam::Straight, "Straight"),
+        (RoutingModeParam::Crossfeed, "Crossfeed"),
+        (RoutingModeParam::NinetyTen, "90/10"),
+        (RoutingModeParam::TenNinety, "10/90"),
+        (RoutingModeParam::PingPong, "Ping Pong L/R"),
+        (RoutingModeParam::Pan, "Pan L/R"),
+        (RoutingModeParam::Rotate, "Rotate L/R"),
+    ];
+    logic_enum_popup(ui, c, popup_id, &resp, |ui| {
+        for (variant, name) in modes {
+            if ui.button(name).clicked() {
+                state.params.push_undo();
+                setter.begin_set_parameter(param);
+                setter.set_parameter(param, variant);
+                setter.end_set_parameter(param);
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+    });
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_enum_popup(
+    ui: &mut Ui,
+    c: LogicCanvas,
+    popup_id: egui::Id,
+    resp: &Response,
+    add_contents: impl FnOnce(&mut Ui),
+) {
+    egui::popup::popup_above_or_below_widget(
+        ui,
+        popup_id,
+        resp,
+        egui::AboveOrBelow::Below,
+        egui::popup::PopupCloseBehavior::CloseOnClick,
+        |ui| {
+            Frame::NONE
+                .fill(LOGIC_BG_ALT)
+                .stroke(Stroke::new(1.0, LOGIC_LINE))
+                .show(ui, |ui| {
+                    ui.set_min_width(96.0 * c.s);
+                    add_contents(ui);
+                });
+        },
+    );
+}
+
+fn logic_begin_sync_gesture(
+    setter: &ParamSetter<'_>,
+    params: &NebulaStereoDelayParams,
+    ch: Channel,
+    link: bool,
+) {
+    let (note, dev) = if ch == Channel::Left {
+        (&params.note_l, &params.deviation_l)
+    } else {
+        (&params.note_r, &params.deviation_r)
+    };
+    setter.begin_set_parameter(note);
+    setter.begin_set_parameter(dev);
+    if link {
+        let (other_note, other_dev) = if ch == Channel::Left {
+            (&params.note_r, &params.deviation_r)
+        } else {
+            (&params.note_l, &params.deviation_l)
+        };
+        setter.begin_set_parameter(other_note);
+        setter.begin_set_parameter(other_dev);
+    }
+}
+
+fn logic_end_sync_gesture(
+    setter: &ParamSetter<'_>,
+    params: &NebulaStereoDelayParams,
+    ch: Channel,
+    link: bool,
+) {
+    let (note, dev) = if ch == Channel::Left {
+        (&params.note_l, &params.deviation_l)
+    } else {
+        (&params.note_r, &params.deviation_r)
+    };
+    setter.end_set_parameter(note);
+    setter.end_set_parameter(dev);
+    if link {
+        let (other_note, other_dev) = if ch == Channel::Left {
+            (&params.note_r, &params.deviation_r)
+        } else {
+            (&params.note_l, &params.deviation_l)
+        };
+        setter.end_set_parameter(other_note);
+        setter.end_set_parameter(other_dev);
+    }
+}
+
+fn logic_set_sync_norm(
+    ui: &Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    ch: Channel,
+    norm: f32,
+    delta_norm: f32,
+    link: bool,
+) {
+    let params = state.params.clone();
+    let (note, dev) = if ch == Channel::Left {
+        (&params.note_l, &params.deviation_l)
+    } else {
+        (&params.note_r, &params.deviation_r)
+    };
+    let (next_note, next_dev) = sync_from_norm(norm);
+    setter.set_parameter(note, next_note);
+    setter.set_parameter(dev, next_dev);
+    if link && stereo_link_active(ui, &state.params) {
+        let (other_note, other_dev) = if ch == Channel::Left {
+            (&params.note_r, &params.deviation_r)
+        } else {
+            (&params.note_l, &params.deviation_l)
+        };
+        let other_norm = (sync_knob_normalized(other_note.value(), other_dev.value()) + delta_norm)
+            .clamp(0.0, 1.0);
+        let (on, od) = sync_from_norm(other_norm);
+        setter.set_parameter(other_note, on);
+        setter.set_parameter(other_dev, od);
+    }
+}
+
+fn logic_set_note_preserve_offset(
+    ui: &Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    ch: Channel,
+    value: NoteValueParam,
+    reset_deviation: bool,
+) {
+    state.params.push_undo();
+    let params = state.params.clone();
+    let (note, dev) = if ch == Channel::Left {
+        (&params.note_l, &params.deviation_l)
+    } else {
+        (&params.note_r, &params.deviation_r)
+    };
+    let delta = note_index(value) as isize - note_index(note.value()) as isize;
+    setter.begin_set_parameter(note);
+    setter.set_parameter(note, value);
+    setter.end_set_parameter(note);
+    if reset_deviation {
+        setter.begin_set_parameter(dev);
+        setter.set_parameter(dev, 0.0);
+        setter.end_set_parameter(dev);
+    }
+    if stereo_link_active(ui, &state.params) {
+        let (other_note, other_dev) = if ch == Channel::Left {
+            (&params.note_r, &params.deviation_r)
+        } else {
+            (&params.note_l, &params.deviation_l)
+        };
+        let idx = (note_index(other_note.value()) as isize + delta)
+            .clamp(0, (note_variants().len() - 1) as isize) as usize;
+        setter.begin_set_parameter(other_note);
+        setter.set_parameter(other_note, note_variants()[idx].0);
+        setter.end_set_parameter(other_note);
+        if reset_deviation {
+            setter.begin_set_parameter(other_dev);
+            setter.set_parameter(other_dev, 0.0);
+            setter.end_set_parameter(other_dev);
+        }
+    }
+}
+
+fn logic_set_note_absolute(
+    ui: &Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    ch: Channel,
+    note: NoteValueParam,
+    deviation: f32,
+    reset_other_relative: bool,
+) {
+    let link = stereo_link_active(ui, &state.params);
+    logic_set_note_preserve_offset(ui, state, setter, ch, note, reset_other_relative);
+    let params = state.params.clone();
+    let dev = if ch == Channel::Left {
+        &params.deviation_l
+    } else {
+        &params.deviation_r
+    };
+    setter.begin_set_parameter(dev);
+    setter.set_parameter(dev, deviation);
+    setter.end_set_parameter(dev);
+    if link && reset_other_relative {
+        let other_dev = if ch == Channel::Left {
+            &params.deviation_r
+        } else {
+            &params.deviation_l
+        };
+        setter.begin_set_parameter(other_dev);
+        setter.set_parameter(other_dev, deviation);
+        setter.end_set_parameter(other_dev);
+    }
+}
+
+fn sync_from_norm(norm: f32) -> (NoteValueParam, f32) {
+    let max = (note_variants().len() - 1) as f32;
+    let pos = norm.clamp(0.0, 1.0) * max;
+    let idx = pos.round().clamp(0.0, max) as usize;
+    let deviation = ((pos - idx as f32) * 200.0).clamp(-100.0, 100.0);
+    (note_variants()[idx].0, deviation)
+}
+
+fn synced_delay_ms(note: NoteValueParam, deviation: f32) -> f32 {
+    let base = crate::dsp::NoteValue::from(note).duration_seconds(120.0) as f32;
+    let factor = 2.0_f32.powf(deviation.clamp(-100.0, 100.0) / 1200.0);
+    (base * factor * 1000.0).clamp(5.0, 2000.0)
+}
+
+fn format_freq_hz(value: f32) -> String {
+    format!("{value:.0} Hz")
 }
 
 fn draw_editor_contents(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, s: f32) {
@@ -698,7 +2479,7 @@ fn draw_link_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>,
         setter.end_set_parameter(&state.params.stereo_link);
     }
     resp.on_hover_text(if linked {
-        "Stereo linked \u{2014} L mirrored to R"
+        "Stereo linked \u{2014} paired controls keep relative L/R settings"
     } else {
         "Stereo unlinked \u{2014} independent L/R"
     });
@@ -1408,7 +3189,7 @@ fn draw_note_ring(
     rect: Rect,
     s: f32,
 ) {
-    let painter = ui.painter();
+    let painter = ui.painter().clone();
     let center = rect.center();
     let radius = rect.width() * 0.41;
     let current = if ch == Channel::Left {

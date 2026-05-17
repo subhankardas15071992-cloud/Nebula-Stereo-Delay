@@ -288,8 +288,9 @@ pub struct DelayParams {
     pub bypass: bool,
 
     // ── Stereo link ───────────────────────────────────────────────────
-    /// When `true`, the left-channel parameters are mirrored to the right
-    /// channel so both sides process identically.
+    /// UI gesture state. The DSP intentionally does not collapse L/R
+    /// parameters when this is enabled; linked controls preserve channel
+    /// ratios where possible at the parameter layer.
     pub stereo_link: bool,
 }
 
@@ -910,29 +911,11 @@ impl DelayEngine {
     /// `(left_output, right_output)` in `f64`.  Convert to `f32` at the
     /// very end of the plugin's output stage.
     pub fn process(&mut self, input_l: f64, input_r: f64, params: &DelayParams) -> (f64, f64) {
-        // ── 1. Stereo link: mirror L params to R when linked ──────────
-        let p = if params.stereo_link {
-            DelayParams {
-                input_mode_r: params.input_mode_l,
-                delay_time_r: params.delay_time_l,
-                low_cut_r: params.low_cut_l,
-                low_cut_slope_r: params.low_cut_slope_l,
-                high_cut_r: params.high_cut_l,
-                high_cut_slope_r: params.high_cut_slope_l,
-                feedback_r: params.feedback_l,
-                feedback_phase_r: params.feedback_phase_l,
-                crossfeed_rl: params.crossfeed_lr, // symmetric
-                crossfeed_phase_rl: params.crossfeed_phase_lr,
-                note_r: params.note_l,
-                deviation_r: params.deviation_l,
-                halve_r: params.halve_l,
-                double_r: params.double_l,
-                output_mix_r: params.output_mix_l,
-                ..*params
-            }
-        } else {
-            params.clone()
-        };
+        // ── 1. Parameter snapshot ─────────────────────────────────────
+        // Stereo Link is handled by the editor/automation layer. The audio
+        // engine keeps the left and right values independent so enabling the
+        // link never forces both channels to identical settings.
+        let p = params.clone();
 
         // ── 2. Input mode selection ───────────────────────────────────
         let in_l = Self::apply_input_mode(p.input_mode_l, input_l, input_r);

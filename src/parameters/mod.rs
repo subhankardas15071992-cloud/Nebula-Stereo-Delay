@@ -484,9 +484,9 @@ fn parse_percentage(s: &str) -> Option<f32> {
 ///
 /// # Stereo Link
 ///
-/// When `stereo_link` is enabled, adjusting a left-channel parameter
-/// automatically mirrors the value to the corresponding right-channel
-/// parameter. The Ctrl/Cmd modifier temporarily overrides this link.
+/// When `stereo_link` is enabled, editor gestures move the corresponding
+/// left/right parameters together while preserving their ratio where possible.
+/// The Ctrl/Cmd modifier temporarily overrides this link.
 #[derive(Params)]
 pub struct NebulaStereoDelayParams {
     // ── Per-Channel: Input Mode ──────────────────────────────────────────
@@ -642,8 +642,8 @@ pub struct NebulaStereoDelayParams {
     pub tempo_sync: BoolParam,
 
     // ── Global: Stereo Link ──────────────────────────────────────────────
-    /// When enabled, left-channel parameters are mirrored to the right
-    /// channel. Display: "Unlinked" / "Linked". Default: Unlinked.
+    /// When enabled, linked editor gestures preserve relative L/R ratios where possible.
+    /// Display: "Unlinked" / "Linked". Default: Unlinked.
     /// Ctrl/Cmd modifier allows temporary unlink.
     #[id = "slnk"]
     pub stereo_link: BoolParam,
