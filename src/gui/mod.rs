@@ -456,6 +456,16 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
         c.font(20.0),
         TEXT_PRI,
     );
+
+    if state.preset_menu_open {
+        draw_preset_panel(
+            ui,
+            state,
+            setter,
+            c,
+            c.rect(8.0, 116.0, 88.0, 26.0).left_bottom() + vec2(0.0, 6.0 * c.s),
+        );
+    }
 }
 
 fn draw_nebula_grid(painter: &Painter, c: LogicCanvas) {
@@ -728,7 +738,7 @@ fn draw_nebula_delay(
 
     let button_w = 30.0;
     let button_h = 19.0;
-    let button_radius = delay_r + 40.0;
+    let button_radius = delay_r + 20.0;
     let halve_x = cx + ARC_START.cos() * button_radius;
     let halve_y = cy + ARC_START.sin() * button_radius;
     let double_x = cx + ARC_END.cos() * button_radius;
@@ -1269,6 +1279,16 @@ fn draw_logic_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<
         c.font(20.0),
         Color32::WHITE,
     );
+
+    if state.preset_menu_open {
+        draw_preset_panel(
+            ui,
+            state,
+            setter,
+            c,
+            c.rect(210.0, 7.0, 76.0, 22.0).left_bottom() + vec2(0.0, 6.0 * c.s),
+        );
+    }
 }
 
 fn draw_logic_command_bar(
@@ -1870,6 +1890,60 @@ fn logic_button(
         if active { BG } else { TEXT_PRI },
     );
     resp
+}
+
+fn logic_dropdown_button(
+    ui: &mut Ui,
+    c: LogicCanvas,
+    rect: Rect,
+    label: &str,
+    id: &str,
+) -> Response {
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click());
+    let fill = if resp.hovered() {
+        Color32::from_rgb(0x21, 0x1B, 0x4A)
+    } else {
+        WIDGET_BG
+    };
+
+    ui.painter()
+        .rect_filled(rect, corner_radius(4.0 * c.s), fill);
+    ui.painter().rect_stroke(
+        rect,
+        corner_radius(4.0 * c.s),
+        Stroke::new(1.0 * c.s, BORDER),
+        egui::StrokeKind::Outside,
+    );
+
+    let text_rect = Rect::from_min_max(
+        rect.min + vec2(5.0 * c.s, 0.0),
+        rect.max - vec2(17.0 * c.s, 0.0),
+    );
+    ui.painter().text(
+        text_rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        c.font(10.0),
+        TEXT_PRI,
+    );
+    draw_dropdown_arrow(ui.painter(), c, rect, TEXT_SEC);
+
+    resp
+}
+
+fn draw_dropdown_arrow(painter: &Painter, c: LogicCanvas, rect: Rect, color: Color32) {
+    let center = Pos2::new(rect.right() - 9.0 * c.s, rect.center().y + 1.0 * c.s);
+    let w = 4.0 * c.s;
+    let h = 3.2 * c.s;
+    painter.add(Shape::convex_polygon(
+        vec![
+            Pos2::new(center.x - w, center.y - h * 0.5),
+            Pos2::new(center.x + w, center.y - h * 0.5),
+            Pos2::new(center.x, center.y + h),
+        ],
+        color,
+        Stroke::new(0.0, Color32::TRANSPARENT),
+    ));
 }
 
 fn logic_float_knob(
@@ -2522,22 +2596,13 @@ fn logic_delay_scale_button(
 fn logic_preset_button(
     ui: &mut Ui,
     state: &mut EditorState,
-    setter: &ParamSetter<'_>,
+    _setter: &ParamSetter<'_>,
     c: LogicCanvas,
     rect: Rect,
 ) {
     let resp = logic_button(ui, c, rect, "Preset", false, "logic_preset");
     if resp.clicked() {
         state.preset_menu_open = !state.preset_menu_open;
-    }
-    if state.preset_menu_open {
-        draw_preset_panel(
-            ui,
-            state,
-            setter,
-            c,
-            rect.left_bottom() + vec2(0.0, 6.0 * c.s),
-        );
     }
 }
 
@@ -2616,10 +2681,13 @@ fn draw_preset_panel(
                         .show(ui, |ui| {
                             let factory = state.preset_manager.factory_presets().to_vec();
                             for preset in factory {
-                                if ui
-                                    .add(Button::new(rich(&preset.name, 9.0 * c.s).color(TEXT_PRI)))
-                                    .clicked()
-                                {
+                                let row_w = ui.available_width();
+                                let button =
+                                    Button::new(rich(&preset.name, 9.0 * c.s).color(TEXT_PRI))
+                                        .fill(WIDGET_BG)
+                                        .stroke(Stroke::new(1.0 * c.s, BORDER))
+                                        .corner_radius(corner_radius(3.0 * c.s));
+                                if ui.add_sized(vec2(row_w, 22.0 * c.s), button).clicked() {
                                     state.params.push_undo();
                                     state.preset_manager.load_preset(
                                         &preset,
@@ -2643,10 +2711,19 @@ fn draw_preset_panel(
                             Ok(user_presets) => {
                                 for preset in user_presets {
                                     ui.horizontal(|ui| {
+                                        let delete_w = 58.0 * c.s;
+                                        let load_w = (ui.available_width() - delete_w - 4.0 * c.s)
+                                            .max(80.0 * c.s);
                                         if ui
-                                            .add(Button::new(
-                                                rich(&preset.name, 9.0 * c.s).color(TEXT_PRI),
-                                            ))
+                                            .add_sized(
+                                                vec2(load_w, 22.0 * c.s),
+                                                Button::new(
+                                                    rich(&preset.name, 9.0 * c.s).color(TEXT_PRI),
+                                                )
+                                                .fill(WIDGET_BG)
+                                                .stroke(Stroke::new(1.0 * c.s, BORDER))
+                                                .corner_radius(corner_radius(3.0 * c.s)),
+                                            )
                                             .clicked()
                                         {
                                             state.params.push_undo();
@@ -2660,9 +2737,12 @@ fn draw_preset_panel(
                                             state.preset_menu_open = false;
                                         }
                                         if ui
-                                            .add(Button::new(
-                                                rich("Delete", 8.0 * c.s).color(TEXT_SEC),
-                                            ))
+                                            .add_sized(
+                                                vec2(delete_w, 22.0 * c.s),
+                                                Button::new(
+                                                    rich("Delete", 8.0 * c.s).color(TEXT_SEC),
+                                                ),
+                                            )
                                             .clicked()
                                         {
                                             state.preset_status = match state
@@ -2876,12 +2956,11 @@ fn logic_input_dropdown(
     } else {
         &params.input_mode_r
     };
-    let resp = logic_button(
+    let resp = logic_dropdown_button(
         ui,
         c,
         rect,
-        &format!("{} ˅", enum_name(param.value())),
-        false,
+        enum_name(param.value()),
         if ch == Channel::Left {
             "logic_input_l"
         } else {
@@ -2933,12 +3012,11 @@ fn logic_note_dropdown(
         &params.note_r
     };
     let current = enum_name(param.value()).replace('T', " triplet");
-    let resp = logic_button(
+    let resp = logic_dropdown_button(
         ui,
         c,
         rect,
-        &format!("{current} ˅"),
-        false,
+        &current,
         if ch == Channel::Left {
             "logic_note_l"
         } else {
@@ -2974,14 +3052,7 @@ fn logic_routing_dropdown(
 ) {
     let params = state.params.clone();
     let param = &params.routing;
-    let resp = logic_button(
-        ui,
-        c,
-        rect,
-        &format!("{} ˅", enum_name(param.value())),
-        false,
-        "logic_routing",
-    );
+    let resp = logic_dropdown_button(ui, c, rect, enum_name(param.value()), "logic_routing");
     let popup_id = ui.id().with("logic_routing_popup");
     if resp.clicked() {
         ui.memory_mut(|m| m.toggle_popup(popup_id));
@@ -3403,14 +3474,7 @@ fn logic_oversampling_dropdown(
 ) {
     let params = state.params.clone();
     let param = &params.oversampling;
-    let resp = logic_button(
-        ui,
-        c,
-        rect,
-        &format!("{} ˅", enum_name(param.value())),
-        false,
-        "logic_oversampling",
-    );
+    let resp = logic_dropdown_button(ui, c, rect, enum_name(param.value()), "logic_oversampling");
     let popup_id = ui.id().with("logic_oversampling_popup");
     if resp.clicked() {
         ui.memory_mut(|m| m.toggle_popup(popup_id));
