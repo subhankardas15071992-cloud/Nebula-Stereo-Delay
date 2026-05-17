@@ -181,14 +181,23 @@ pub enum RoutingModeParam {
     #[name = "10/90"]
     TenNinety,
     #[id = "pingpong"]
-    #[name = "Ping Pong L/R"]
+    #[name = "Ping Pong L"]
     PingPong,
     #[id = "pan"]
-    #[name = "Pan L/R"]
+    #[name = "Pan L to R"]
     Pan,
     #[id = "rotate"]
-    #[name = "Rotate L/R"]
+    #[name = "Rotate L"]
     Rotate,
+    #[id = "pingpong_r"]
+    #[name = "Ping Pong R"]
+    PingPongR,
+    #[id = "pan_r_l"]
+    #[name = "Pan R to L"]
+    PanRl,
+    #[id = "rotate_r"]
+    #[name = "Rotate R"]
+    RotateR,
 }
 
 impl From<RoutingModeParam> for dsp::RoutingMode {
@@ -203,6 +212,9 @@ impl From<RoutingModeParam> for dsp::RoutingMode {
             RoutingModeParam::PingPong => dsp::RoutingMode::PingPong,
             RoutingModeParam::Pan => dsp::RoutingMode::Pan,
             RoutingModeParam::Rotate => dsp::RoutingMode::Rotate,
+            RoutingModeParam::PingPongR => dsp::RoutingMode::PingPongR,
+            RoutingModeParam::PanRl => dsp::RoutingMode::PanRl,
+            RoutingModeParam::RotateR => dsp::RoutingMode::RotateR,
         }
     }
 }
@@ -350,7 +362,7 @@ impl ParamSnapshot {
             crossfeed_rl: 0.0,
             crossfeed_phase_lr: false,
             crossfeed_phase_rl: false,
-            routing: 0,      // Customized
+            routing: 1,      // Straight
             oversampling: 0, // Off
             tempo_sync: false,
             stereo_link: false,
@@ -672,7 +684,7 @@ pub struct NebulaStereoDelayParams {
     pub crossfeed_phase_rl: BoolParam,
 
     // ── Global: Routing ──────────────────────────────────────────────────
-    /// Active routing mode. Default: Customized.
+    /// Active routing mode. Default: Straight.
     #[id = "rout"]
     pub routing: EnumParam<RoutingModeParam>,
 
@@ -1091,7 +1103,7 @@ impl Default for NebulaStereoDelayParams {
             // ══════════════════════════════════════════════════════════
             // Global: Routing
             // ══════════════════════════════════════════════════════════
-            routing: EnumParam::new("Routing", RoutingModeParam::Customized),
+            routing: EnumParam::new("Routing", RoutingModeParam::Straight),
 
             // ══════════════════════════════════════════════════════════
             // Global: Oversampling
@@ -1486,7 +1498,7 @@ mod tests {
 
     #[test]
     fn routing_mode_param_round_trip() {
-        for i in 0..8 {
+        for i in 0..11 {
             let param = RoutingModeParam::from_index(i);
             assert_eq!(param.to_index(), i);
         }
@@ -1551,6 +1563,10 @@ mod tests {
         assert_eq!(
             dsp::RoutingMode::from(RoutingModeParam::PingPong),
             dsp::RoutingMode::PingPong
+        );
+        assert_eq!(
+            dsp::RoutingMode::from(RoutingModeParam::PingPongR),
+            dsp::RoutingMode::PingPongR
         );
     }
 
@@ -1655,6 +1671,7 @@ mod tests {
         let snap = ParamSnapshot::default_values();
         assert_eq!(snap.input_mode_l, 1); // Left
         assert_eq!(snap.input_mode_r, 2); // Right
+        assert_eq!(snap.routing, 1); // Straight
         assert_eq!(snap.delay_time_l, 0.5);
         assert_eq!(snap.feedback_l, 0.4);
         assert_eq!(snap.output_mix_l, 1.0);

@@ -696,6 +696,8 @@ fn draw_nebula_global(
     setter: &ParamSetter<'_>,
     c: LogicCanvas,
 ) {
+    sync_routing_display_to_parameters(state, setter);
+
     let painter = ui.painter().clone();
     let x = GLOBAL_X;
     let params = state.params.clone();
@@ -1576,6 +1578,8 @@ fn draw_logic_global(
     setter: &ParamSetter<'_>,
     c: LogicCanvas,
 ) {
+    sync_routing_display_to_parameters(state, setter);
+
     let painter = ui.painter().clone();
     painter.text(
         c.pos(GLOBAL_X + 96.0, 52.0),
@@ -2857,29 +2861,412 @@ fn logic_routing_dropdown(
     if resp.clicked() {
         ui.memory_mut(|m| m.toggle_popup(popup_id));
     }
-    let modes = [
-        (RoutingModeParam::Customized, "Customized"),
-        (RoutingModeParam::Straight, "Straight"),
-        (RoutingModeParam::Crossfeed, "Crossfeed"),
-        (RoutingModeParam::NinetyTen, "90/10"),
-        (RoutingModeParam::TenNinety, "10/90"),
-        (RoutingModeParam::PingPong, "Ping Pong L/R"),
-        (RoutingModeParam::Pan, "Pan L/R"),
-        (RoutingModeParam::Rotate, "Rotate L/R"),
-    ];
+    let modes = routing_menu_modes();
     logic_enum_popup(ui, c, popup_id, &resp, |ui| {
         for (variant, name) in modes {
             if ui.button(name).clicked() {
                 state.params.push_undo();
-                setter.begin_set_parameter(param);
-                setter.set_parameter(param, variant);
-                setter.end_set_parameter(param);
+                apply_routing_preset(state, setter, variant);
                 ui.memory_mut(|m| m.close_popup());
             }
         }
     });
     let resp = resp.on_hover_text(param.name().to_string());
     add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn routing_menu_modes() -> [(RoutingModeParam, &'static str); 11] {
+    [
+        (RoutingModeParam::Customized, "Customized"),
+        (RoutingModeParam::Straight, "Straight"),
+        (RoutingModeParam::Crossfeed, "Crossfeed"),
+        (RoutingModeParam::NinetyTen, "90/10"),
+        (RoutingModeParam::TenNinety, "10/90"),
+        (RoutingModeParam::PingPong, "Ping Pong L"),
+        (RoutingModeParam::PingPongR, "Ping Pong R"),
+        (RoutingModeParam::Pan, "Pan L to R"),
+        (RoutingModeParam::PanRl, "Pan R to L"),
+        (RoutingModeParam::Rotate, "Rotate L"),
+        (RoutingModeParam::RotateR, "Rotate R"),
+    ]
+}
+
+fn apply_routing_preset(
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    requested: RoutingModeParam,
+) {
+    let params = state.params.clone();
+    match requested {
+        RoutingModeParam::Customized => {
+            set_routing_value(setter, &params.routing, RoutingModeParam::Customized);
+        }
+        RoutingModeParam::Straight => {
+            let feedback = mean2(params.feedback_l.value(), params.feedback_r.value());
+            set_standard_inputs(setter, &params);
+            set_float_value(setter, &params.feedback_l, feedback);
+            set_float_value(setter, &params.feedback_r, feedback);
+            set_float_value(setter, &params.crossfeed_lr, 0.0);
+            set_float_value(setter, &params.crossfeed_rl, 0.0);
+            set_normal_phases(setter, &params);
+            set_routing_value(setter, &params.routing, RoutingModeParam::Straight);
+        }
+        RoutingModeParam::Crossfeed => {
+            let crossfeed = audible_crossfeed(mean2(
+                params.crossfeed_lr.value(),
+                params.crossfeed_rl.value(),
+            ));
+            set_standard_inputs(setter, &params);
+            set_float_value(setter, &params.feedback_l, 0.0);
+            set_float_value(setter, &params.feedback_r, 0.0);
+            set_float_value(setter, &params.crossfeed_lr, crossfeed);
+            set_float_value(setter, &params.crossfeed_rl, crossfeed);
+            set_normal_phases(setter, &params);
+            set_routing_value(setter, &params.routing, RoutingModeParam::Crossfeed);
+        }
+        RoutingModeParam::NinetyTen => {
+            let feedback = mean2(params.feedback_l.value(), params.feedback_r.value());
+            let crossfeed = rounded_tenth_amount(feedback);
+            set_standard_inputs(setter, &params);
+            set_float_value(setter, &params.feedback_l, feedback);
+            set_float_value(setter, &params.feedback_r, feedback);
+            set_float_value(setter, &params.crossfeed_lr, crossfeed);
+            set_float_value(setter, &params.crossfeed_rl, crossfeed);
+            set_normal_phases(setter, &params);
+            set_routing_value(
+                setter,
+                &params.routing,
+                if crossfeed <= ROUTE_EPS {
+                    RoutingModeParam::Straight
+                } else {
+                    RoutingModeParam::NinetyTen
+                },
+            );
+        }
+        RoutingModeParam::TenNinety => {
+            let source_crossfeed = mean2(params.crossfeed_lr.value(), params.crossfeed_rl.value());
+            let feedback = rounded_tenth_amount(source_crossfeed);
+            let crossfeed = if feedback <= ROUTE_EPS {
+                0.0
+            } else {
+                source_crossfeed
+            };
+            set_standard_inputs(setter, &params);
+            set_float_value(setter, &params.feedback_l, feedback);
+            set_float_value(setter, &params.feedback_r, feedback);
+            set_float_value(setter, &params.crossfeed_lr, crossfeed);
+            set_float_value(setter, &params.crossfeed_rl, crossfeed);
+            set_normal_phases(setter, &params);
+            set_routing_value(
+                setter,
+                &params.routing,
+                if feedback <= ROUTE_EPS {
+                    RoutingModeParam::Straight
+                } else {
+                    RoutingModeParam::TenNinety
+                },
+            );
+        }
+        RoutingModeParam::PingPong => {
+            let crossfeed = audible_crossfeed(mean2(
+                params.crossfeed_lr.value(),
+                params.crossfeed_rl.value(),
+            ));
+            set_input_value(setter, &params.input_mode_l, InputModeParam::LeftPlusRight);
+            set_input_value(setter, &params.input_mode_r, InputModeParam::Off);
+            set_float_value(setter, &params.feedback_l, 0.0);
+            set_float_value(setter, &params.feedback_r, 0.0);
+            set_float_value(setter, &params.crossfeed_lr, crossfeed);
+            set_float_value(setter, &params.crossfeed_rl, crossfeed);
+            set_normal_phases(setter, &params);
+            set_routing_value(setter, &params.routing, RoutingModeParam::PingPong);
+        }
+        RoutingModeParam::PingPongR => {
+            let crossfeed = audible_crossfeed(mean2(
+                params.crossfeed_lr.value(),
+                params.crossfeed_rl.value(),
+            ));
+            set_input_value(setter, &params.input_mode_l, InputModeParam::Off);
+            set_input_value(setter, &params.input_mode_r, InputModeParam::LeftPlusRight);
+            set_float_value(setter, &params.feedback_l, 0.0);
+            set_float_value(setter, &params.feedback_r, 0.0);
+            set_float_value(setter, &params.crossfeed_lr, crossfeed);
+            set_float_value(setter, &params.crossfeed_rl, crossfeed);
+            set_normal_phases(setter, &params);
+            set_routing_value(setter, &params.routing, RoutingModeParam::PingPongR);
+        }
+        RoutingModeParam::Pan => {
+            let feedback = mean2(params.feedback_l.value(), params.feedback_r.value());
+            let crossfeed = pan_crossfeed(params.crossfeed_lr.value(), feedback);
+            set_input_value(setter, &params.input_mode_l, InputModeParam::LeftPlusRight);
+            set_input_value(setter, &params.input_mode_r, InputModeParam::Off);
+            set_float_value(setter, &params.feedback_l, feedback);
+            set_float_value(setter, &params.feedback_r, feedback);
+            set_float_value(setter, &params.crossfeed_lr, crossfeed);
+            set_float_value(setter, &params.crossfeed_rl, 0.0);
+            set_normal_phases(setter, &params);
+            set_routing_value(setter, &params.routing, RoutingModeParam::Pan);
+        }
+        RoutingModeParam::PanRl => {
+            let feedback = mean2(params.feedback_l.value(), params.feedback_r.value());
+            let crossfeed = pan_crossfeed(params.crossfeed_rl.value(), feedback);
+            set_input_value(setter, &params.input_mode_l, InputModeParam::Off);
+            set_input_value(setter, &params.input_mode_r, InputModeParam::LeftPlusRight);
+            set_float_value(setter, &params.feedback_l, feedback);
+            set_float_value(setter, &params.feedback_r, feedback);
+            set_float_value(setter, &params.crossfeed_lr, 0.0);
+            set_float_value(setter, &params.crossfeed_rl, crossfeed);
+            set_normal_phases(setter, &params);
+            set_routing_value(setter, &params.routing, RoutingModeParam::PanRl);
+        }
+        RoutingModeParam::Rotate => {
+            let amount = mean3(
+                params.feedback_r.value(),
+                params.crossfeed_lr.value(),
+                params.crossfeed_rl.value(),
+            );
+            set_input_value(setter, &params.input_mode_l, InputModeParam::Off);
+            set_input_value(setter, &params.input_mode_r, InputModeParam::LeftPlusRight);
+            set_float_value(setter, &params.feedback_l, 0.0);
+            set_float_value(setter, &params.feedback_r, amount);
+            set_float_value(setter, &params.crossfeed_lr, amount);
+            set_float_value(setter, &params.crossfeed_rl, amount);
+            set_bool_value(setter, &params.feedback_phase_l, false);
+            set_bool_value(setter, &params.feedback_phase_r, true);
+            set_bool_value(setter, &params.crossfeed_phase_lr, true);
+            set_bool_value(setter, &params.crossfeed_phase_rl, false);
+            set_routing_value(setter, &params.routing, RoutingModeParam::Rotate);
+        }
+        RoutingModeParam::RotateR => {
+            let amount = mean3(
+                params.feedback_l.value(),
+                params.crossfeed_lr.value(),
+                params.crossfeed_rl.value(),
+            );
+            set_input_value(setter, &params.input_mode_l, InputModeParam::LeftPlusRight);
+            set_input_value(setter, &params.input_mode_r, InputModeParam::Off);
+            set_float_value(setter, &params.feedback_l, amount);
+            set_float_value(setter, &params.feedback_r, 0.0);
+            set_float_value(setter, &params.crossfeed_lr, amount);
+            set_float_value(setter, &params.crossfeed_rl, amount);
+            set_bool_value(setter, &params.feedback_phase_l, true);
+            set_bool_value(setter, &params.feedback_phase_r, false);
+            set_bool_value(setter, &params.crossfeed_phase_lr, false);
+            set_bool_value(setter, &params.crossfeed_phase_rl, true);
+            set_routing_value(setter, &params.routing, RoutingModeParam::RotateR);
+        }
+    }
+}
+
+const ROUTE_EPS: f32 = 0.006;
+
+fn sync_routing_display_to_parameters(state: &mut EditorState, setter: &ParamSetter<'_>) {
+    let params = state.params.clone();
+    let actual = classify_routing_shape(&params);
+    if params.routing.value() != actual {
+        set_routing_value(setter, &params.routing, actual);
+    }
+}
+
+fn classify_routing_shape(params: &NebulaStereoDelayParams) -> RoutingModeParam {
+    let im_l = params.input_mode_l.value();
+    let im_r = params.input_mode_r.value();
+    let fb_l = params.feedback_l.value();
+    let fb_r = params.feedback_r.value();
+    let cf_lr = params.crossfeed_lr.value();
+    let cf_rl = params.crossfeed_rl.value();
+    let fpl = params.feedback_phase_l.value();
+    let fpr = params.feedback_phase_r.value();
+    let cplr = params.crossfeed_phase_lr.value();
+    let cprl = params.crossfeed_phase_rl.value();
+
+    let standard_inputs = im_l == InputModeParam::Left && im_r == InputModeParam::Right;
+    let left_sum_only = im_l == InputModeParam::LeftPlusRight && im_r == InputModeParam::Off;
+    let right_sum_only = im_l == InputModeParam::Off && im_r == InputModeParam::LeftPlusRight;
+    let normal_phase = !fpl && !fpr && !cplr && !cprl;
+    let feedback_equal = close(fb_l, fb_r);
+    let crossfeed_equal = close(cf_lr, cf_rl);
+    let feedback_zero = is_zero(fb_l) && is_zero(fb_r);
+    let crossfeed_zero = is_zero(cf_lr) && is_zero(cf_rl);
+
+    if right_sum_only
+        && is_zero(fb_l)
+        && close(fb_r, cf_lr)
+        && close(fb_r, cf_rl)
+        && !fpl
+        && fpr
+        && cplr
+        && !cprl
+    {
+        return RoutingModeParam::Rotate;
+    }
+
+    if left_sum_only
+        && is_zero(fb_r)
+        && close(fb_l, cf_lr)
+        && close(fb_l, cf_rl)
+        && fpl
+        && !fpr
+        && !cplr
+        && cprl
+    {
+        return RoutingModeParam::RotateR;
+    }
+
+    if normal_phase && left_sum_only && feedback_zero && crossfeed_equal && !is_zero(cf_lr) {
+        return RoutingModeParam::PingPong;
+    }
+
+    if normal_phase && right_sum_only && feedback_zero && crossfeed_equal && !is_zero(cf_lr) {
+        return RoutingModeParam::PingPongR;
+    }
+
+    if normal_phase
+        && left_sum_only
+        && feedback_equal
+        && !is_zero(cf_lr)
+        && cf_lr <= fb_l + ROUTE_EPS
+        && is_zero(cf_rl)
+    {
+        return RoutingModeParam::Pan;
+    }
+
+    if normal_phase
+        && right_sum_only
+        && feedback_equal
+        && !is_zero(cf_rl)
+        && cf_rl <= fb_l + ROUTE_EPS
+        && is_zero(cf_lr)
+    {
+        return RoutingModeParam::PanRl;
+    }
+
+    if normal_phase && standard_inputs && feedback_equal && crossfeed_zero {
+        return RoutingModeParam::Straight;
+    }
+
+    if normal_phase
+        && standard_inputs
+        && feedback_equal
+        && crossfeed_equal
+        && !is_zero(cf_lr)
+        && close(cf_lr, rounded_tenth_amount(fb_l))
+    {
+        return RoutingModeParam::NinetyTen;
+    }
+
+    if normal_phase
+        && standard_inputs
+        && feedback_equal
+        && crossfeed_equal
+        && !is_zero(fb_l)
+        && close(fb_l, rounded_tenth_amount(cf_lr))
+    {
+        return RoutingModeParam::TenNinety;
+    }
+
+    if normal_phase && standard_inputs && feedback_zero && crossfeed_equal && !is_zero(cf_lr) {
+        return RoutingModeParam::Crossfeed;
+    }
+
+    RoutingModeParam::Customized
+}
+
+fn set_standard_inputs(setter: &ParamSetter<'_>, params: &NebulaStereoDelayParams) {
+    set_input_value(setter, &params.input_mode_l, InputModeParam::Left);
+    set_input_value(setter, &params.input_mode_r, InputModeParam::Right);
+}
+
+fn set_normal_phases(setter: &ParamSetter<'_>, params: &NebulaStereoDelayParams) {
+    set_bool_value(setter, &params.feedback_phase_l, false);
+    set_bool_value(setter, &params.feedback_phase_r, false);
+    set_bool_value(setter, &params.crossfeed_phase_lr, false);
+    set_bool_value(setter, &params.crossfeed_phase_rl, false);
+}
+
+fn set_float_value(setter: &ParamSetter<'_>, param: &nih_plug::params::FloatParam, value: f32) {
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value.clamp(0.0, 1.0));
+    setter.end_set_parameter(param);
+}
+
+fn set_bool_value(setter: &ParamSetter<'_>, param: &nih_plug::params::BoolParam, value: bool) {
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value);
+    setter.end_set_parameter(param);
+}
+
+fn set_input_value(
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::enums::EnumParam<InputModeParam>,
+    value: InputModeParam,
+) {
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value);
+    setter.end_set_parameter(param);
+}
+
+fn set_routing_value(
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::enums::EnumParam<RoutingModeParam>,
+    value: RoutingModeParam,
+) {
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value);
+    setter.end_set_parameter(param);
+}
+
+fn mean2(a: f32, b: f32) -> f32 {
+    ((a + b) * 0.5).clamp(0.0, 1.0)
+}
+
+fn mean3(a: f32, b: f32, c: f32) -> f32 {
+    ((a + b + c) / 3.0).clamp(0.0, 1.0)
+}
+
+fn audible_crossfeed(value: f32) -> f32 {
+    if value <= ROUTE_EPS {
+        0.5
+    } else {
+        value.clamp(0.01, 1.0)
+    }
+}
+
+fn pan_crossfeed(current: f32, feedback: f32) -> f32 {
+    if feedback <= ROUTE_EPS {
+        0.0
+    } else if current > ROUTE_EPS && current <= feedback + ROUTE_EPS {
+        current.clamp(0.0, feedback)
+    } else {
+        feedback
+    }
+}
+
+fn rounded_tenth_amount(source: f32) -> f32 {
+    let pct = (source.clamp(0.0, 1.0) * 100.0).round() as i32;
+    let rounded_pct = match pct {
+        0..=4 => 0,
+        5..=13 => 1,
+        14..=22 => 2,
+        23..=31 => 3,
+        32..=40 => 4,
+        41..=49 => 5,
+        50..=58 => 6,
+        59..=67 => 7,
+        68..=76 => 8,
+        77..=82 => 9,
+        83..=91 => 10,
+        _ => 11,
+    };
+    rounded_pct as f32 / 100.0
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() <= ROUTE_EPS
+}
+
+fn is_zero(value: f32) -> bool {
+    value.abs() <= ROUTE_EPS
 }
 
 fn logic_oversampling_dropdown(
@@ -4680,16 +5067,7 @@ fn draw_routing_popup(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
         ui.memory_mut(|m| m.toggle_popup(popup_id));
     }
 
-    let modes: [(RoutingModeParam, &str); 8] = [
-        (RoutingModeParam::Customized, "Customized"),
-        (RoutingModeParam::Straight, "Straight"),
-        (RoutingModeParam::Crossfeed, "Crossfeed"),
-        (RoutingModeParam::NinetyTen, "90/10"),
-        (RoutingModeParam::TenNinety, "10/90"),
-        (RoutingModeParam::PingPong, "Ping Pong L/R"),
-        (RoutingModeParam::Pan, "Pan L/R"),
-        (RoutingModeParam::Rotate, "Rotate L/R"),
-    ];
+    let modes = routing_menu_modes();
 
     egui::popup::popup_above_or_below_widget(
         ui,
@@ -4714,9 +5092,7 @@ fn draw_routing_popup(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
                         .corner_radius(corner_radius(2.0));
                         if ui.add(btn).clicked() {
                             state.params.push_undo();
-                            setter.begin_set_parameter(param);
-                            setter.set_parameter(param, variant);
-                            setter.end_set_parameter(param);
+                            apply_routing_preset(state, setter, variant);
                             if state.params.stereo_link.value() {
                                 setter.begin_set_parameter(&state.params.stereo_link);
                                 setter.set_parameter(&state.params.stereo_link, false);
@@ -5454,6 +5830,9 @@ fn routing_from_index(idx: usize) -> RoutingModeParam {
         5 => RoutingModeParam::PingPong,
         6 => RoutingModeParam::Pan,
         7 => RoutingModeParam::Rotate,
+        8 => RoutingModeParam::PingPongR,
+        9 => RoutingModeParam::PanRl,
+        10 => RoutingModeParam::RotateR,
         _ => RoutingModeParam::Customized,
     }
 }
@@ -5468,6 +5847,9 @@ fn routing_to_index(val: RoutingModeParam) -> usize {
         RoutingModeParam::PingPong => 5,
         RoutingModeParam::Pan => 6,
         RoutingModeParam::Rotate => 7,
+        RoutingModeParam::PingPongR => 8,
+        RoutingModeParam::PanRl => 9,
+        RoutingModeParam::RotateR => 10,
     }
 }
 

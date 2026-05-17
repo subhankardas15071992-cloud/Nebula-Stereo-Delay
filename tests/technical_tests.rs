@@ -126,6 +126,9 @@ fn all_routing_modes() -> &'static [RoutingMode] {
         RoutingMode::PingPong,
         RoutingMode::Pan,
         RoutingMode::Rotate,
+        RoutingMode::PingPongR,
+        RoutingMode::PanRl,
+        RoutingMode::RotateR,
     ]
 }
 

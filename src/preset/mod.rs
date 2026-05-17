@@ -103,9 +103,12 @@ pub struct PresetData {
 /// | `routing`     | 2     | Crossfeed            |
 /// | `routing`     | 3     | 90/10                |
 /// | `routing`     | 4     | 10/90                |
-/// | `routing`     | 5     | Ping Pong            |
-/// | `routing`     | 6     | Pan L/R              |
-/// | `routing`     | 7     | Rotate L/R           |
+/// | `routing`     | 5     | Ping Pong L          |
+/// | `routing`     | 6     | Pan L to R           |
+/// | `routing`     | 7     | Rotate L             |
+/// | `routing`     | 8     | Ping Pong R          |
+/// | `routing`     | 9     | Pan R to L           |
+/// | `routing`     | 10    | Rotate R             |
 /// | `oversampling`| 0     | Off                  |
 /// | `oversampling`| 1     | 2x                   |
 /// | `oversampling`| 2     | 4x                   |
@@ -204,7 +207,7 @@ impl Default for PresetValues {
             crossfeed_rl: 0.0,
             crossfeed_phase_lr: false,
             crossfeed_phase_rl: false,
-            routing: 0,      // Customized
+            routing: 1,      // Straight
             oversampling: 0, // Off
             tempo_sync: false,
             stereo_link: false,
@@ -527,7 +530,7 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.0,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 0,      // Customized
+                routing: 1,      // Straight
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
@@ -639,8 +642,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
-                input_mode_l: 3,     // L+R (both channels feed both delay lines)
-                input_mode_r: 3,     // L+R
+                input_mode_l: 3,     // L+R
+                input_mode_r: 0,     // Off
                 delay_time_l: 0.375, // Dotted eighth feel (3/8 note)
                 delay_time_r: 0.375,
                 note_l: 5, // Eighth
@@ -659,15 +662,15 @@ fn build_factory_presets() -> Vec<PresetData> {
                 high_cut_r: 10000.0,
                 high_cut_slope_l: 12.0,
                 high_cut_slope_r: 12.0,
-                feedback_l: 0.55,
-                feedback_r: 0.55,
+                feedback_l: 0.0,
+                feedback_r: 0.0,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.0, // Not used in Ping Pong routing
-                crossfeed_rl: 0.0,
+                crossfeed_lr: 0.55,
+                crossfeed_rl: 0.55,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 5,      // Ping Pong
+                routing: 5,      // Ping Pong L
                 oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: true,
@@ -676,18 +679,17 @@ fn build_factory_presets() -> Vec<PresetData> {
             },
         },
         // ── 5. Rotary ──────────────────────────────────────────────────
-        // Rotary-speaker-inspired delay using the Rotate routing mode.
-        // The LFO in the Rotate mode modulates the stereo panning of
-        // the wet signal. Longer delay times with moderate feedback
-        // let the rotation effect develop over time.
+        // Rotary-speaker-inspired delay using the Rotate L routing shape.
+        // Phase-inverted right feedback plus crossfeed creates a moving
+        // circular repeat pattern without hidden routing state.
         PresetData {
             name: "Rotary".to_string(),
             author: FACTORY_AUTHOR.to_string(),
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
-                input_mode_l: 1, // Left
-                input_mode_r: 2, // Right
+                input_mode_l: 0, // Off
+                input_mode_r: 3, // L+R
                 delay_time_l: 0.5,
                 delay_time_r: 0.5,
                 note_l: 3, // Quarter
@@ -706,15 +708,15 @@ fn build_factory_presets() -> Vec<PresetData> {
                 high_cut_r: 8000.0,
                 high_cut_slope_l: 12.0,
                 high_cut_slope_r: 12.0,
-                feedback_l: 0.5,
+                feedback_l: 0.0,
                 feedback_r: 0.5,
                 feedback_phase_l: false,
-                feedback_phase_r: false,
-                crossfeed_lr: 0.0, // Not used in Rotate routing
-                crossfeed_rl: 0.0,
-                crossfeed_phase_lr: false,
+                feedback_phase_r: true,
+                crossfeed_lr: 0.5,
+                crossfeed_rl: 0.5,
+                crossfeed_phase_lr: true,
                 crossfeed_phase_rl: false,
-                routing: 7,      // Rotate
+                routing: 7,      // Rotate L
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: true,
@@ -899,11 +901,11 @@ fn build_factory_presets() -> Vec<PresetData> {
                 high_cut_slope_l: 12.0,
                 high_cut_slope_r: 12.0,
                 feedback_l: 0.5, // Enough repeats to establish the rhythm
-                feedback_r: 0.45,
+                feedback_r: 0.5,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.15, // Slight crossfeed for cohesion
-                crossfeed_rl: 0.15,
+                crossfeed_lr: 0.06, // Rounded 10% crossfeed from 50% feedback
+                crossfeed_rl: 0.06,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
                 routing: 3,       // 90/10 — mostly self-feedback with hint of cross
@@ -950,8 +952,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_r: 0.6,
                 feedback_phase_l: false,
                 feedback_phase_r: false,
-                crossfeed_lr: 0.0,
-                crossfeed_rl: 0.0,
+                crossfeed_lr: 0.07,
+                crossfeed_rl: 0.07,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
                 routing: 3,      // 90/10 — mostly straight with subtle cross

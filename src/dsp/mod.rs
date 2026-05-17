@@ -54,10 +54,6 @@ const MIN_DELAY_SAMPLES: f64 = 1.0;
 /// safe room to read past the nominal read position.
 const BUFFER_MARGIN: usize = 8;
 
-/// Default LFO frequency (Hz) used by the **Rotate** routing mode to
-/// modulate the stereo-panning angle.
-const ROTATE_LFO_HZ: f64 = 0.5;
-
 /// One first-order complementary filter stage is 6 dB/oct.
 const FILTER_STAGE_SLOPE_DB: f64 = 6.0;
 
@@ -74,27 +70,29 @@ const MAX_FILTER_STAGES: usize = 17;
 pub enum RoutingMode {
     /// Independent L/R channels with full crossfeed control via the
     /// `crossfeed_lr` / `crossfeed_rl` parameters.
-    #[default]
     Customized,
     /// Straight: L→L, R→R with no crossfeed whatsoever.
+    #[default]
     Straight,
-    /// Full symmetric crossfeed: each channel's feedback crosses fully
+    /// Full symmetric crossfeed: each channel's delayed signal crosses
     /// to the opposite channel (no self-feedback).
     Crossfeed,
-    /// 90 % same-channel feedback, 10 % crossfeed.
+    /// Same-channel feedback with rounded 10 % crossfeed.
     NinetyTen,
-    /// 10 % same-channel feedback, 90 % crossfeed.
+    /// Crossfeed with rounded 10 % same-channel feedback.
     TenNinety,
-    /// Ping-pong: signal bounces L↔R on successive repeats (cross-only
-    /// feedback, no self-feedback).
+    /// Ping-pong from the left input side.
     PingPong,
-    /// Panning delay: normal self-feedback, but the wet outputs are
-    /// swapped (L delay → R out, R delay → L out) for a wide stereo image.
+    /// Ping-pong from the right input side.
+    PingPongR,
+    /// Pan from left delay toward right.
     Pan,
-    /// Rotary speaker simulation: an LFO continuously modulates the
-    /// blend of self- vs. cross-feedback and applies equal-power panning
-    /// to the wet outputs.
+    /// Pan from right delay toward left.
+    PanRl,
+    /// Rotate toward the left side using phase-inverted feedback/crossfeed.
     Rotate,
+    /// Rotate toward the right side using phase-inverted feedback/crossfeed.
+    RotateR,
 }
 
 /// Per-channel input source selection.
@@ -762,10 +760,6 @@ pub struct DelayEngine {
     /// Internal bypass latch set by `set_bypass()`.
     bypass_latch: bool,
 
-    // ── LFO for Rotate mode ───────────────────────────────────────────
-    /// Current phase of the rotation LFO in radians `[0, TAU)`.
-    lfo_phase: f64,
-
     // ── Config ────────────────────────────────────────────────────────
     config: DelayEngineConfig,
 }
@@ -835,7 +829,6 @@ impl DelayEngine {
             smooth_mix_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             bypass_gain: SmoothedValue::new(1.0, BYPASS_FADE_SAMPLES),
             bypass_latch: false,
-            lfo_phase: 0.0,
             config,
         }
     }
@@ -887,7 +880,6 @@ impl DelayEngine {
         self.smooth_mix_l.reset(self.smooth_mix_l.target);
         self.smooth_mix_r.reset(self.smooth_mix_r.target);
         self.bypass_gain.reset(self.bypass_gain.target);
-        self.lfo_phase = 0.0;
     }
 
     /// Engage or release the soft bypass.
@@ -1036,14 +1028,8 @@ impl DelayEngine {
         self.delay_l.write_and_advance(in_l + fb_to_l);
         self.delay_r.write_and_advance(in_r + fb_to_r);
 
-        // ── 12. Output routing (Pan / Rotate modify wet outputs) ──────
-        let (wet_l, wet_r) = Self::apply_output_routing(
-            p.routing,
-            filt_l,
-            filt_r,
-            &mut self.lfo_phase,
-            self.sample_rate,
-        );
+        // ── 12. Output routing ────────────────────────────────────────
+        let (wet_l, wet_r) = Self::apply_output_routing(p.routing, filt_l, filt_r);
 
         // ── 13. Dry/wet mix ───────────────────────────────────────────
         //   out = dry * (1 - mix) + wet * mix
@@ -1118,16 +1104,13 @@ impl DelayEngine {
     ///
     /// # Routing matrix per mode
     ///
-    /// | Mode        | Self-L | Cross L→R | Cross R→L | Self-R |
-    /// |-------------|--------|-----------|-----------|--------|
-    /// | Customized  | fb_l   | cf_lr     | cf_rl     | fb_r   |
-    /// | Straight    | fb_l   | 0         | 0         | fb_r   |
-    /// | Crossfeed   | 0      | fb_l      | fb_r      | 0      |
-    /// | 90/10       | 0.9·fb | 0.1·fb    | 0.1·fb    | 0.9·fb |
-    /// | 10/90       | 0.1·fb | 0.9·fb    | 0.9·fb    | 0.1·fb |
-    /// | PingPong    | 0      | fb_l      | fb_r      | 0      |
-    /// | Pan         | fb_l   | cf_lr     | cf_rl     | fb_r   |
-    /// | Rotate      | LFO-modulated mix of self + cross |
+    /// | Mode                 | Self-L | Cross L→R | Cross R→L | Self-R |
+    /// |----------------------|--------|-----------|-----------|--------|
+    /// | Customized           | fb_l   | cf_lr     | cf_rl     | fb_r   |
+    /// | Straight             | fb_l   | 0         | 0         | fb_r   |
+    /// | Crossfeed/Ping Pong  | 0      | cf_lr     | cf_rl     | 0      |
+    /// | 90/10, 10/90, Pan    | fb_l   | cf_lr     | cf_rl     | fb_r   |
+    /// | Rotate               | fb_l   | cf_lr     | cf_rl     | fb_r   |
     #[inline]
     fn compute_feedback(inputs: FeedbackInputs) -> (f64, f64) {
         let FeedbackInputs {
@@ -1162,46 +1145,60 @@ impl DelayEngine {
             }
 
             RoutingMode::Crossfeed => {
-                // All feedback crosses to opposite channel (no self).
-                let cross_l_to_r = filt_l * fb_l * sign_l * sign_cf_lr;
-                let cross_r_to_l = filt_r * fb_r * sign_r * sign_cf_rl;
-                (cross_r_to_l, cross_l_to_r)
+                // Cross only. If an older preset only has feedback set,
+                // fall back to that for compatibility.
+                let cf_l = if cf_lr > 0.0 { cf_lr } else { fb_l };
+                let cf_r = if cf_rl > 0.0 { cf_rl } else { fb_r };
+                (
+                    filt_r * cf_r * sign_r * sign_cf_rl,
+                    filt_l * cf_l * sign_l * sign_cf_lr,
+                )
             }
 
             RoutingMode::NinetyTen => {
-                // 90 % self, 10 % cross.
-                let fb_to_l =
-                    filt_l * fb_l * sign_l * 0.9 + filt_r * fb_r * sign_r * sign_cf_rl * 0.1;
-                let fb_to_r =
-                    filt_r * fb_r * sign_r * 0.9 + filt_l * fb_l * sign_l * sign_cf_lr * 0.1;
-                (fb_to_l, fb_to_r)
+                // The UI writes the rounded 10 % crossfeed amount into the
+                // crossfeed controls. Older host-side changes may only set
+                // feedback, so synthesize the old 90/10 split as a fallback.
+                let cf_l = if cf_lr > 0.0 { cf_lr } else { fb_l * 0.1 };
+                let cf_r = if cf_rl > 0.0 { cf_rl } else { fb_r * 0.1 };
+                (
+                    self_l + filt_r * cf_r * sign_r * sign_cf_rl,
+                    self_r + filt_l * cf_l * sign_l * sign_cf_lr,
+                )
             }
 
             RoutingMode::TenNinety => {
-                // 10 % self, 90 % cross.
-                let fb_to_l =
-                    filt_l * fb_l * sign_l * 0.1 + filt_r * fb_r * sign_r * sign_cf_rl * 0.9;
-                let fb_to_r =
-                    filt_r * fb_r * sign_r * 0.1 + filt_l * fb_l * sign_l * sign_cf_lr * 0.9;
-                (fb_to_l, fb_to_r)
+                // The UI writes both the dominant crossfeed and rounded
+                // feedback amount. Fall back to the previous 10/90 matrix
+                // when older automation only changes feedback.
+                let cf_l = if cf_lr > 0.0 { cf_lr } else { fb_l * 0.9 };
+                let cf_r = if cf_rl > 0.0 { cf_rl } else { fb_r * 0.9 };
+                (
+                    self_l + filt_r * cf_r * sign_r * sign_cf_rl,
+                    self_r + filt_l * cf_l * sign_l * sign_cf_lr,
+                )
             }
 
-            RoutingMode::PingPong => {
-                // Cross only, no self-feedback (signal bounces L↔R).
-                let cross_l_to_r = filt_l * fb_l * sign_l * sign_cf_lr;
-                let cross_r_to_l = filt_r * fb_r * sign_r * sign_cf_rl;
-                (cross_r_to_l, cross_l_to_r)
+            RoutingMode::PingPong | RoutingMode::PingPongR => {
+                // Cross only, no self-feedback. Fall back to feedback for
+                // compatibility with older ping-pong presets.
+                let cf_l = if cf_lr > 0.0 { cf_lr } else { fb_l };
+                let cf_r = if cf_rl > 0.0 { cf_rl } else { fb_r };
+                (
+                    filt_r * cf_r * sign_r * sign_cf_rl,
+                    filt_l * cf_l * sign_l * sign_cf_lr,
+                )
             }
 
-            RoutingMode::Pan => {
-                // Same as Customized for feedback; output stage swaps.
+            RoutingMode::Pan | RoutingMode::PanRl => {
+                // Parameter preset shape handles direction; process the
+                // resulting feedback/crossfeed values directly.
                 (self_l + cross_rl, self_r + cross_lr)
             }
 
-            RoutingMode::Rotate => {
-                // Feedback matrix is identical to Customized here;
-                // the rotation effect is applied at the output stage
-                // via equal-power panning.
+            RoutingMode::Rotate | RoutingMode::RotateR => {
+                // Rotation is represented by input, amount and phase
+                // parameters rather than an invisible LFO matrix.
                 (self_l + cross_rl, self_r + cross_lr)
             }
         }
@@ -1210,45 +1207,12 @@ impl DelayEngine {
     /// Apply routing-specific transformations to the wet (filtered
     /// delayed) signal before the dry/wet mix.
     ///
-    /// - **Pan**: Swap L↔R outputs for a wide opposing panning effect.
-    /// - **Rotate**: Apply equal-power panning modulated by the internal
-    ///   LFO, producing a smooth rotary-speaker sweep.
-    /// - All other modes pass the wet signals through unchanged.
+    /// Routing presets now write their topology into the visible
+    /// parameters, so this stage passes the wet signals through unchanged.
     #[inline]
-    fn apply_output_routing(
-        routing: RoutingMode,
-        wet_l: f64,
-        wet_r: f64,
-        lfo_phase: &mut f64,
-        sample_rate: f64,
-    ) -> (f64, f64) {
-        match routing {
-            RoutingMode::Pan => {
-                // Swap: L delay appears on the right output and vice
-                // versa, creating a wide opposing-pan effect.
-                (wet_r, wet_l)
-            }
-
-            RoutingMode::Rotate => {
-                // Advance the rotation LFO.
-                *lfo_phase += TAU * ROTATE_LFO_HZ / sample_rate;
-                if *lfo_phase >= TAU {
-                    *lfo_phase -= TAU;
-                }
-
-                // Equal-power (constant-amplitude) panning.
-                //   cos/sin give a smooth rotation of the stereo image.
-                let cos_p = lfo_phase.cos();
-                let sin_p = lfo_phase.sin();
-
-                let out_l = wet_l * cos_p + wet_r * sin_p;
-                let out_r = -wet_l * sin_p + wet_r * cos_p;
-                (out_l, out_r)
-            }
-
-            // All other modes: pass through unchanged.
-            _ => (wet_l, wet_r),
-        }
+    fn apply_output_routing(routing: RoutingMode, wet_l: f64, wet_r: f64) -> (f64, f64) {
+        let _ = routing;
+        (wet_l, wet_r)
     }
 }
 
@@ -1458,6 +1422,9 @@ mod tests {
             RoutingMode::PingPong,
             RoutingMode::Pan,
             RoutingMode::Rotate,
+            RoutingMode::PingPongR,
+            RoutingMode::PanRl,
+            RoutingMode::RotateR,
         ];
         for mode in modes {
             let mut engine = DelayEngine::new(44100.0);
