@@ -116,6 +116,12 @@ pub struct PresetData {
 /// | `oversampling`| 4     | 8x                   |
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PresetValues {
+    // ── Global level trims (dB) ───────────────────────────────────────
+    #[serde(default)]
+    pub input_level_db: f32,
+    #[serde(default)]
+    pub output_level_db: f32,
+
     // ── Per-Channel: Input Mode ────────────────────────────────────────
     pub input_mode_l: u8,
     pub input_mode_r: u8,
@@ -179,6 +185,8 @@ pub struct PresetValues {
 impl Default for PresetValues {
     fn default() -> Self {
         Self {
+            input_level_db: 0.0,
+            output_level_db: 0.0,
             input_mode_l: 1, // Left
             input_mode_r: 2, // Right
             delay_time_l: 0.5,
@@ -338,6 +346,10 @@ impl PresetManager {
         setter: &nih_plug::prelude::ParamSetter,
     ) {
         let v = &preset.values;
+
+        // ── Input/Output Level ──────────────────────────────────────
+        setter.set_parameter(&params.input_level, v.input_level_db);
+        setter.set_parameter(&params.output_level, v.output_level_db);
 
         // ── Input Mode ──────────────────────────────────────────────
         setter.set_parameter(
@@ -502,6 +514,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 1, // Left
                 input_mode_r: 2, // Right
                 delay_time_l: 0.5,
@@ -548,6 +562,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 1,     // Left
                 input_mode_r: 2,     // Right
                 delay_time_l: 0.060, // 60 ms
@@ -595,6 +611,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 3, // L+R (mono sum for even wash)
                 input_mode_r: 3, // L+R
                 delay_time_l: 1.2,
@@ -642,6 +660,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 3,     // L+R
                 input_mode_r: 0,     // Off
                 delay_time_l: 0.375, // Dotted eighth feel (3/8 note)
@@ -688,6 +708,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 0, // Off
                 input_mode_r: 3, // L+R
                 delay_time_l: 0.5,
@@ -735,6 +757,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 1,     // Left
                 input_mode_r: 2,     // Right
                 delay_time_l: 0.012, // 12 ms — below Haas zone threshold
@@ -784,6 +808,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 1,     // Left
                 input_mode_r: 2,     // Right
                 delay_time_l: 0.350, // 350 ms — typical tape echo range
@@ -832,6 +858,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 1,     // Left
                 input_mode_r: 2,     // Right
                 delay_time_l: 0.020, // 20 ms — within Haas fusion zone
@@ -880,6 +908,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 3,   // L+R (mono input for even rhythmic pattern)
                 input_mode_r: 3,   // L+R
                 delay_time_l: 0.5, // Overridden by tempo sync + note value
@@ -928,6 +958,8 @@ fn build_factory_presets() -> Vec<PresetData> {
             created: FACTORY_CREATED.to_string(),
             version: PRESET_VERSION.to_string(),
             values: PresetValues {
+                input_level_db: 0.0,
+                output_level_db: 0.0,
                 input_mode_l: 1,     // Left
                 input_mode_r: 2,     // Right
                 delay_time_l: 0.280, // 280 ms

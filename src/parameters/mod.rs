@@ -269,6 +269,12 @@ impl OversamplingParam {
 /// is 0.0–1.0, enums are stored by variant index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamSnapshot {
+    // ── Global level trims ───────────────────────────────────────────
+    #[serde(default)]
+    pub input_level_db: f32,
+    #[serde(default)]
+    pub output_level_db: f32,
+
     // ── Per-channel ──────────────────────────────────────────────────
     pub input_mode_l: usize,
     pub input_mode_r: usize,
@@ -334,6 +340,8 @@ impl ParamSnapshot {
     /// Returns a snapshot filled with the plugin's default parameter values.
     fn default_values() -> Self {
         Self {
+            input_level_db: 0.0,
+            output_level_db: 0.0,
             input_mode_l: 1, // Left
             input_mode_r: 2, // Right
             delay_time_l: 0.5,
@@ -510,6 +518,21 @@ fn parse_percentage(s: &str) -> Option<f32> {
         .map(|v| v / 100.0)
 }
 
+/// Format a gain trim in dB.
+fn format_gain_db(val: f32) -> String {
+    format!("{val:+.1}")
+}
+
+/// Parse a gain trim string that may include "dB".
+fn parse_gain_db(s: &str) -> Option<f32> {
+    s.trim()
+        .trim_end_matches("dB")
+        .trim_end_matches("db")
+        .trim()
+        .parse::<f32>()
+        .ok()
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Main Parameter Struct
 // ═══════════════════════════════════════════════════════════════════════════
@@ -542,6 +565,15 @@ fn parse_percentage(s: &str) -> Option<f32> {
 /// The Ctrl/Cmd modifier temporarily overrides this link.
 #[derive(Params)]
 pub struct NebulaStereoDelayParams {
+    // ── Global: Input/Output Level ──────────────────────────────────────
+    /// Input trim before the delay network, in dB. Default: 0 dB.
+    #[id = "inlvl"]
+    pub input_level: FloatParam,
+
+    /// Output trim after the delay network, in dB. Default: 0 dB.
+    #[id = "outlvl"]
+    pub output_level: FloatParam,
+
     // ── Per-Channel: Input Mode ──────────────────────────────────────────
     /// Input source for the left delay channel. Default: **Left**.
     #[id = "iml"]
@@ -758,6 +790,37 @@ impl Default for NebulaStereoDelayParams {
         let freq_skew = FloatRange::skew_factor(-2.0);
 
         Self {
+            // ══════════════════════════════════════════════════════════
+            // Global: Input/Output Level
+            // ══════════════════════════════════════════════════════════
+            input_level: FloatParam::new(
+                "Input Level",
+                0.0,
+                FloatRange::Linear {
+                    min: -50.0,
+                    max: 50.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.1)
+            .with_value_to_string(Arc::new(format_gain_db))
+            .with_string_to_value(Arc::new(parse_gain_db))
+            .with_unit(" dB"),
+
+            output_level: FloatParam::new(
+                "Output Level",
+                0.0,
+                FloatRange::Linear {
+                    min: -50.0,
+                    max: 50.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.1)
+            .with_value_to_string(Arc::new(format_gain_db))
+            .with_string_to_value(Arc::new(parse_gain_db))
+            .with_unit(" dB"),
+
             // ══════════════════════════════════════════════════════════
             // Per-Channel: Input Mode
             // ══════════════════════════════════════════════════════════
@@ -1191,6 +1254,8 @@ impl NebulaStereoDelayParams {
     /// thread.
     pub fn capture_snapshot(&self) -> ParamSnapshot {
         ParamSnapshot {
+            input_level_db: self.input_level.value(),
+            output_level_db: self.output_level.value(),
             input_mode_l: self.input_mode_l.value().to_index(),
             input_mode_r: self.input_mode_r.value().to_index(),
             delay_time_l: self.delay_time_l.value(),
@@ -1250,6 +1315,8 @@ impl NebulaStereoDelayParams {
         snapshot: &ParamSnapshot,
     ) {
         // Float params
+        setter.set_parameter(&self.input_level, snapshot.input_level_db);
+        setter.set_parameter(&self.output_level, snapshot.output_level_db);
         setter.set_parameter(&self.delay_time_l, snapshot.delay_time_l);
         setter.set_parameter(&self.delay_time_r, snapshot.delay_time_r);
         setter.set_parameter(&self.deviation_l, snapshot.deviation_l);
@@ -1431,6 +1498,8 @@ impl NebulaStereoDelayParams {
     /// delay times.
     pub fn to_dsp_params(&self, tempo_bpm: f64) -> dsp::DelayParams {
         dsp::DelayParams {
+            input_level_db: self.input_level.value() as f64,
+            output_level_db: self.output_level.value() as f64,
             input_mode_l: self.input_mode_l.value().into(),
             input_mode_r: self.input_mode_r.value().into(),
             delay_time_l: self.delay_time_l.value() as f64,

@@ -67,6 +67,7 @@
 //! state (meters, spectrum) that the GUI and audio thread share.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use crate::parameters::NebulaStereoDelayParams;
@@ -108,6 +109,10 @@ const NUM_BINS: usize = FFT_SIZE / 2;
 /// for the full rationale). In summary: we only need atomicity, not
 /// synchronisation, because meter values are independent of all other state.
 pub struct MeterValues {
+    /// Left input channel peak level after input trim (f32 bits, linear).
+    pub input_l: AtomicU32,
+    /// Right input channel peak level after input trim (f32 bits, linear).
+    pub input_r: AtomicU32,
     /// Left output channel peak level (f32 bits, 0.0–1.0).
     pub output_l: AtomicU32,
     /// Right output channel peak level (f32 bits, 0.0–1.0).
@@ -124,6 +129,8 @@ impl MeterValues {
     pub fn new() -> Self {
         let zero_bits = 0.0f32.to_bits();
         Self {
+            input_l: AtomicU32::new(zero_bits),
+            input_r: AtomicU32::new(zero_bits),
             output_l: AtomicU32::new(zero_bits),
             output_r: AtomicU32::new(zero_bits),
             feedback_l: AtomicU32::new(zero_bits),
@@ -139,6 +146,18 @@ impl MeterValues {
     #[inline]
     pub fn set_output_l(&self, value: f32) {
         self.output_l.store(value.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Store the left input meter value.
+    #[inline]
+    pub fn set_input_l(&self, value: f32) {
+        self.input_l.store(value.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Store the right input meter value.
+    #[inline]
+    pub fn set_input_r(&self, value: f32) {
+        self.input_r.store(value.to_bits(), Ordering::Relaxed);
     }
 
     /// Store the right output meter value.
@@ -166,6 +185,18 @@ impl MeterValues {
     #[inline]
     pub fn get_output_l(&self) -> f32 {
         f32::from_bits(self.output_l.load(Ordering::Relaxed))
+    }
+
+    /// Read the left input meter value.
+    #[inline]
+    pub fn get_input_l(&self) -> f32 {
+        f32::from_bits(self.input_l.load(Ordering::Relaxed))
+    }
+
+    /// Read the right input meter value.
+    #[inline]
+    pub fn get_input_r(&self) -> f32 {
+        f32::from_bits(self.input_r.load(Ordering::Relaxed))
     }
 
     /// Read the right output meter value.
@@ -340,7 +371,7 @@ impl Default for SpectrumData {
 /// ```
 pub struct StateManager {
     /// Lock-free peak meter values for the GUI.
-    pub meters: MeterValues,
+    pub meters: Arc<MeterValues>,
 
     /// Spectrum analyser data (try_lock pattern).
     pub spectrum: SpectrumData,
@@ -357,14 +388,22 @@ pub struct StateManager {
 impl StateManager {
     /// Create a new `StateManager` bound to the given parameter struct.
     pub fn new(params: std::sync::Arc<NebulaStereoDelayParams>) -> Self {
+        Self::with_meters(params, Arc::new(MeterValues::new()))
+    }
+
+    /// Create a new `StateManager` with a caller-owned meter block.
+    pub fn with_meters(
+        params: std::sync::Arc<NebulaStereoDelayParams>,
+        meters: Arc<MeterValues>,
+    ) -> Self {
         Self {
-            meters: MeterValues::new(),
+            meters,
             spectrum: SpectrumData::new(),
             parameters: params,
         }
     }
 
-    /// Update all four peak meters from the audio thread.
+    /// Update all peak meters from the audio thread.
     ///
     /// This is designed to be called **per-sample** inside the `process`
     /// callback. The implementation stores the absolute value of each
@@ -374,10 +413,21 @@ impl StateManager {
     ///
     /// # Parameters
     ///
-    /// - `out_l` / `out_r` — left and right output sample values.
+    /// - `in_l` / `in_r` — left and right input sample values after input trim.
+    /// - `out_l` / `out_r` — left and right output sample values after output trim.
     /// - `fb_l` / `fb_r` — left and right feedback-path sample values.
     #[inline]
-    pub fn update_meters(&self, out_l: f32, out_r: f32, fb_l: f32, fb_r: f32) {
+    pub fn update_meters(
+        &self,
+        in_l: f32,
+        in_r: f32,
+        out_l: f32,
+        out_r: f32,
+        fb_l: f32,
+        fb_r: f32,
+    ) {
+        self.meters.set_input_l(in_l.abs());
+        self.meters.set_input_r(in_r.abs());
         self.meters.set_output_l(out_l.abs());
         self.meters.set_output_r(out_r.abs());
         self.meters.set_feedback_l(fb_l.abs());
@@ -591,6 +641,8 @@ mod tests {
     #[test]
     fn meter_values_new_starts_at_zero() {
         let mv = MeterValues::new();
+        assert_eq!(mv.get_input_l(), 0.0);
+        assert_eq!(mv.get_input_r(), 0.0);
         assert_eq!(mv.get_output_l(), 0.0);
         assert_eq!(mv.get_output_r(), 0.0);
         assert_eq!(mv.get_feedback_l(), 0.0);
@@ -600,11 +652,15 @@ mod tests {
     #[test]
     fn meter_values_set_and_get() {
         let mv = MeterValues::new();
+        mv.set_input_l(0.125);
+        mv.set_input_r(0.375);
         mv.set_output_l(0.5);
         mv.set_output_r(0.75);
         mv.set_feedback_l(0.25);
         mv.set_feedback_r(1.0);
 
+        assert!((mv.get_input_l() - 0.125).abs() < 1e-6);
+        assert!((mv.get_input_r() - 0.375).abs() < 1e-6);
         assert!((mv.get_output_l() - 0.5).abs() < 1e-6);
         assert!((mv.get_output_r() - 0.75).abs() < 1e-6);
         assert!((mv.get_feedback_l() - 0.25).abs() < 1e-6);
@@ -775,8 +831,10 @@ mod tests {
         let params = std::sync::Arc::new(NebulaStereoDelayParams::default());
         let sm = StateManager::new(params);
 
-        sm.update_meters(0.3, -0.7, 0.1, -0.9);
+        sm.update_meters(0.2, -0.4, 0.3, -0.7, 0.1, -0.9);
 
+        assert!((sm.meters.get_input_l() - 0.2).abs() < 1e-6);
+        assert!((sm.meters.get_input_r() - 0.4).abs() < 1e-6);
         assert!((sm.meters.get_output_l() - 0.3).abs() < 1e-6);
         assert!((sm.meters.get_output_r() - 0.7).abs() < 1e-6);
         assert!((sm.meters.get_feedback_l() - 0.1).abs() < 1e-6);

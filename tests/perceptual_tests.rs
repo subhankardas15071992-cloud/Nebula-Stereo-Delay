@@ -1782,6 +1782,8 @@ fn golden_industry_standard_reference() {
     // ── Process through the full plugin engine ───────────────────────
     let mut engine = DelayEngine::new(SR);
     let params = DelayParams {
+        input_level_db: 0.0,
+        output_level_db: 0.0,
         input_mode_l: InputMode::Left,
         input_mode_r: InputMode::Right,
         delay_time_l: delay_time,

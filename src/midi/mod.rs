@@ -129,7 +129,7 @@ pub struct MidiMapping {
 const CC_SLOT_COUNT: usize = 16 * 128; // 2048
 
 /// Number of MIDI-controllable plugin targets.
-pub const MIDI_TARGET_COUNT: usize = 35;
+pub const MIDI_TARGET_COUNT: usize = 37;
 
 const NO_TARGET: u16 = u16::MAX;
 
@@ -137,6 +137,8 @@ const NO_TARGET: u16 = u16::MAX;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum MidiTarget {
+    InputLevel,
+    OutputLevel,
     InputModeL,
     InputModeR,
     DelayTimeL,
@@ -183,47 +185,51 @@ impl MidiTarget {
     #[inline]
     pub fn from_index(index: usize) -> Option<Self> {
         match index {
-            0 => Some(Self::InputModeL),
-            1 => Some(Self::InputModeR),
-            2 => Some(Self::DelayTimeL),
-            3 => Some(Self::DelayTimeR),
-            4 => Some(Self::NoteL),
-            5 => Some(Self::NoteR),
-            6 => Some(Self::DeviationL),
-            7 => Some(Self::DeviationR),
-            8 => Some(Self::HalveL),
-            9 => Some(Self::HalveR),
-            10 => Some(Self::DoubleL),
-            11 => Some(Self::DoubleR),
-            12 => Some(Self::LowCutL),
-            13 => Some(Self::LowCutR),
-            14 => Some(Self::LowCutSlopeL),
-            15 => Some(Self::LowCutSlopeR),
-            16 => Some(Self::HighCutL),
-            17 => Some(Self::HighCutR),
-            18 => Some(Self::HighCutSlopeL),
-            19 => Some(Self::HighCutSlopeR),
-            20 => Some(Self::FeedbackL),
-            21 => Some(Self::FeedbackR),
-            22 => Some(Self::FeedbackPhaseL),
-            23 => Some(Self::FeedbackPhaseR),
-            24 => Some(Self::CrossfeedLr),
-            25 => Some(Self::CrossfeedRl),
-            26 => Some(Self::CrossfeedPhaseLr),
-            27 => Some(Self::CrossfeedPhaseRl),
-            28 => Some(Self::Routing),
-            29 => Some(Self::TempoSync),
-            30 => Some(Self::StereoLink),
-            31 => Some(Self::OutputMixL),
-            32 => Some(Self::OutputMixR),
-            33 => Some(Self::Oversampling),
-            34 => Some(Self::Bypass),
+            0 => Some(Self::InputLevel),
+            1 => Some(Self::OutputLevel),
+            2 => Some(Self::InputModeL),
+            3 => Some(Self::InputModeR),
+            4 => Some(Self::DelayTimeL),
+            5 => Some(Self::DelayTimeR),
+            6 => Some(Self::NoteL),
+            7 => Some(Self::NoteR),
+            8 => Some(Self::DeviationL),
+            9 => Some(Self::DeviationR),
+            10 => Some(Self::HalveL),
+            11 => Some(Self::HalveR),
+            12 => Some(Self::DoubleL),
+            13 => Some(Self::DoubleR),
+            14 => Some(Self::LowCutL),
+            15 => Some(Self::LowCutR),
+            16 => Some(Self::LowCutSlopeL),
+            17 => Some(Self::LowCutSlopeR),
+            18 => Some(Self::HighCutL),
+            19 => Some(Self::HighCutR),
+            20 => Some(Self::HighCutSlopeL),
+            21 => Some(Self::HighCutSlopeR),
+            22 => Some(Self::FeedbackL),
+            23 => Some(Self::FeedbackR),
+            24 => Some(Self::FeedbackPhaseL),
+            25 => Some(Self::FeedbackPhaseR),
+            26 => Some(Self::CrossfeedLr),
+            27 => Some(Self::CrossfeedRl),
+            28 => Some(Self::CrossfeedPhaseLr),
+            29 => Some(Self::CrossfeedPhaseRl),
+            30 => Some(Self::Routing),
+            31 => Some(Self::TempoSync),
+            32 => Some(Self::StereoLink),
+            33 => Some(Self::OutputMixL),
+            34 => Some(Self::OutputMixR),
+            35 => Some(Self::Oversampling),
+            36 => Some(Self::Bypass),
             _ => None,
         }
     }
 
     pub fn from_param_id(param_id: &str) -> Option<Self> {
         match param_id {
+            "input_level" => Some(Self::InputLevel),
+            "output_level" => Some(Self::OutputLevel),
             "input_mode_l" => Some(Self::InputModeL),
             "input_mode_r" => Some(Self::InputModeR),
             "delay_time_l" => Some(Self::DelayTimeL),
@@ -265,6 +271,8 @@ impl MidiTarget {
 
     pub fn param_id(self) -> &'static str {
         match self {
+            Self::InputLevel => "input_level",
+            Self::OutputLevel => "output_level",
             Self::InputModeL => "input_mode_l",
             Self::InputModeR => "input_mode_r",
             Self::DelayTimeL => "delay_time_l",

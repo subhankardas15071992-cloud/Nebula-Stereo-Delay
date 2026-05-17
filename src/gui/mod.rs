@@ -57,6 +57,7 @@ use crate::parameters::{
     RoutingModeParam,
 };
 use crate::preset::{PresetManager, PresetValues};
+use crate::state::MeterValues;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Theme constants
@@ -77,6 +78,7 @@ const ACCENT_DIM: Color32 = Color32::from_rgba_premultiplied(0x00, 0xA8, 0xFF, 0
 const MAGENTA: Color32 = Color32::from_rgb(0xFF, 0x28, 0xC7);
 const ORANGE: Color32 = Color32::from_rgb(0xFF, 0xA8, 0x00);
 const PURPLE: Color32 = Color32::from_rgb(0x9A, 0x5C, 0xFF);
+const METER_GREEN: Color32 = Color32::from_rgb(0x4C, 0xFF, 0x74);
 /// Primary text — white.
 const TEXT_PRI: Color32 = Color32::from_rgb(0xEE, 0xEE, 0xEE);
 /// Secondary / label text — mid gray.
@@ -100,17 +102,22 @@ const ARC_END: f32 = ARC_START + 3.0 * std::f32::consts::FRAC_PI_2;
 const ARC_SWEEP: f32 = ARC_END - ARC_START;
 
 /// Default window width in logical pixels.
-const WIN_W: u32 = 860;
+const WIN_W: u32 = 1000;
 /// Default window height in logical pixels.
 const WIN_H: u32 = 640;
 
-const LOGIC_W: f32 = 860.0;
+const LOGIC_W: f32 = 1000.0;
 const LOGIC_H: f32 = 640.0;
 const TOP_H: f32 = 148.0;
 const FOOT_H: f32 = 34.0;
 const LEFT_W: f32 = 342.0;
 const RIGHT_W: f32 = 342.0;
-const GLOBAL_X: f32 = 708.0;
+const METER_W: f32 = 60.0;
+const INPUT_METER_X: f32 = 8.0;
+const LEFT_X: f32 = 76.0;
+const RIGHT_X: f32 = 426.0;
+const GLOBAL_X: f32 = 776.0;
+const OUTPUT_METER_X: f32 = 928.0;
 
 const LOGIC_BG: Color32 = Color32::from_rgb(0x21, 0x39, 0x50);
 const LOGIC_BG_ALT: Color32 = Color32::from_rgb(0x1D, 0x34, 0x49);
@@ -133,6 +140,8 @@ const LOGIC_BUTTON_ON: Color32 = Color32::from_rgb(0x0F, 0x2A, 0x35);
 /// GUI-specific state that persists across frames and editor sessions.
 struct EditorState {
     params: Arc<NebulaStereoDelayParams>,
+    /// Lock-free audio peak meters shared with the processor.
+    meters: Arc<MeterValues>,
     /// Lock-free MIDI runtime shared with the processor.
     midi_runtime: Arc<MidiRuntime>,
     /// Shared reference to the `EguiState` for window-size coordination.
@@ -166,12 +175,13 @@ struct ValueEditState {
 /// Create the egui editor for the Nebula Stereo Delay plugin.
 ///
 /// Returns `Option<Box<dyn Editor>>` suitable for use in the plugin's
-/// `editor()` method. The window starts at 860 × 640 logical pixels and
+/// `editor()` method. The window starts at 1000 × 640 logical pixels and
 /// is freely resizable via the corner drag handle; all elements scale
 /// proportionally with the window size and system DPI.
 pub fn create_egui_editor(
     params: Arc<NebulaStereoDelayParams>,
     midi_runtime: Arc<MidiRuntime>,
+    meters: Arc<MeterValues>,
 ) -> Option<Box<dyn Editor>> {
     let egui_state = EguiState::from_size(WIN_W, WIN_H);
     let egui_state_for_closure = egui_state.clone();
@@ -184,6 +194,7 @@ pub fn create_egui_editor(
         egui_state,
         EditorState {
             params,
+            meters,
             midi_runtime,
             egui_state: egui_state_for_closure,
             midi_learn_active: false,
@@ -204,7 +215,7 @@ pub fn create_egui_editor(
             // for window-size coordination.
             let egui_state = state.egui_state.clone();
             nih_plug_egui::resizable_window::ResizableWindow::new("nebula-stereo-delay")
-                .min_size(vec2(700.0, 520.0))
+                .min_size(vec2(820.0, 520.0))
                 .show(ctx, egui_state.as_ref(), |ui| {
                     let root_rect = ui.max_rect();
                     let mut root_ui = ui.new_child(
@@ -272,6 +283,8 @@ fn apply_midi_target_normalized(
     }
 
     match target {
+        MidiTarget::InputLevel => set_from_normalized!(&params.input_level),
+        MidiTarget::OutputLevel => set_from_normalized!(&params.output_level),
         MidiTarget::InputModeL => set_from_normalized!(&params.input_mode_l),
         MidiTarget::InputModeR => set_from_normalized!(&params.input_mode_r),
         MidiTarget::DelayTimeL => set_from_normalized!(&params.delay_time_l),
@@ -415,7 +428,7 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
         TEXT_SEC,
     );
     painter.text(
-        c.pos(828.0, 66.0),
+        c.pos(LOGIC_W - 18.0, 66.0),
         Align2::RIGHT_CENTER,
         "v1.0",
         c.font(11.0),
@@ -427,22 +440,44 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
     nebula_panel(
         &painter,
         c,
-        c.rect(8.0, TOP_H, LEFT_W, LOGIC_H - TOP_H - FOOT_H - 8.0),
+        c.rect(
+            INPUT_METER_X,
+            TOP_H,
+            METER_W,
+            LOGIC_H - TOP_H - FOOT_H - 8.0,
+        ),
     );
     nebula_panel(
         &painter,
         c,
-        c.rect(358.0, TOP_H, RIGHT_W, LOGIC_H - TOP_H - FOOT_H - 8.0),
+        c.rect(LEFT_X, TOP_H, LEFT_W, LOGIC_H - TOP_H - FOOT_H - 8.0),
+    );
+    nebula_panel(
+        &painter,
+        c,
+        c.rect(RIGHT_X, TOP_H, RIGHT_W, LOGIC_H - TOP_H - FOOT_H - 8.0),
     );
     nebula_panel(
         &painter,
         c,
         c.rect(GLOBAL_X, TOP_H, 144.0, LOGIC_H - TOP_H - FOOT_H - 8.0),
     );
+    nebula_panel(
+        &painter,
+        c,
+        c.rect(
+            OUTPUT_METER_X,
+            TOP_H,
+            METER_W,
+            LOGIC_H - TOP_H - FOOT_H - 8.0,
+        ),
+    );
 
-    draw_nebula_channel(ui, state, setter, c, Channel::Left, 8.0);
-    draw_nebula_channel(ui, state, setter, c, Channel::Right, 358.0);
+    draw_nebula_level_meter(ui, state, setter, c, INPUT_METER_X, true);
+    draw_nebula_channel(ui, state, setter, c, Channel::Left, LEFT_X);
+    draw_nebula_channel(ui, state, setter, c, Channel::Right, RIGHT_X);
     draw_nebula_global(ui, state, setter, c);
+    draw_nebula_level_meter(ui, state, setter, c, OUTPUT_METER_X, false);
 
     painter.rect_filled(
         c.rect(0.0, LOGIC_H - FOOT_H, LOGIC_W, FOOT_H),
@@ -502,6 +537,191 @@ fn nebula_panel(painter: &Painter, c: LogicCanvas, rect: Rect) {
         ),
         egui::StrokeKind::Outside,
     );
+}
+
+fn draw_nebula_level_meter(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    x: f32,
+    is_input: bool,
+) {
+    let painter = ui.painter().clone();
+    let params = state.params.clone();
+    let param = if is_input {
+        &params.input_level
+    } else {
+        &params.output_level
+    };
+    let (level_l, level_r, label, slider_id) = if is_input {
+        (
+            state.meters.get_input_l(),
+            state.meters.get_input_r(),
+            "INPUT",
+            "input_level_meter",
+        )
+    } else {
+        (
+            state.meters.get_output_l(),
+            state.meters.get_output_r(),
+            "OUTPUT",
+            "output_level_meter",
+        )
+    };
+    let peak_db = linear_to_db(level_l.max(level_r));
+    let top_rect = c.rect(x + 6.0, 184.0, METER_W - 12.0, 24.0);
+    let meter_l = c.rect(x + 17.0, 224.0, 9.0, 292.0);
+    let meter_r = c.rect(x + 34.0, 224.0, 9.0, 292.0);
+    let slider_rect = c.rect(x + 9.0, 216.0, METER_W - 18.0, 308.0);
+    let bottom_rect = c.rect(x + 5.0, 552.0, METER_W - 10.0, 24.0);
+
+    painter.text(
+        c.pos(x + METER_W * 0.5, 168.0),
+        Align2::CENTER_CENTER,
+        label,
+        c.font(10.0),
+        ACCENT,
+    );
+    nebula_value_box(&painter, c, top_rect, &format_meter_db(peak_db), true);
+
+    draw_nebula_meter_track(&painter, c, meter_l, level_l);
+    draw_nebula_meter_track(&painter, c, meter_r, level_r);
+    draw_nebula_level_handle(ui, state, setter, c, slider_rect, param, slider_id);
+
+    nebula_float_value_editor(
+        ui,
+        state,
+        setter,
+        c,
+        bottom_rect,
+        param,
+        &format!("nebula_value_{}", param_id_for(param.name())),
+    );
+}
+
+fn draw_nebula_meter_track(painter: &Painter, c: LogicCanvas, rect: Rect, level: f32) {
+    painter.rect_filled(rect, corner_radius(3.0 * c.s), INSET_BG);
+    painter.rect_stroke(
+        rect,
+        corner_radius(3.0 * c.s),
+        Stroke::new(1.0 * c.s, BORDER),
+        egui::StrokeKind::Outside,
+    );
+
+    let norm = meter_level_norm(level);
+    if norm > 0.0 {
+        let fill_h = rect.height() * norm;
+        let fill_rect = Rect::from_min_max(
+            Pos2::new(rect.left(), rect.bottom() - fill_h),
+            Pos2::new(rect.right(), rect.bottom()),
+        );
+        let glow = Color32::from_rgba_premultiplied(0x4C, 0xFF, 0x74, 0x50);
+        painter.rect_filled(fill_rect.expand(1.5 * c.s), corner_radius(3.0 * c.s), glow);
+        painter.rect_filled(fill_rect, corner_radius(3.0 * c.s), METER_GREEN);
+    }
+
+    let zero_y = rect.bottom() - rect.height() * meter_db_norm(0.0);
+    painter.line_segment(
+        [
+            Pos2::new(rect.left() - 2.0 * c.s, zero_y),
+            Pos2::new(rect.right() + 2.0 * c.s, zero_y),
+        ],
+        Stroke::new(1.0 * c.s, TEXT_SEC),
+    );
+}
+
+fn draw_nebula_level_handle(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+    param: &nih_plug::params::FloatParam,
+    id: &str,
+) {
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    let norm = param.modulated_normalized_value().clamp(0.0, 1.0);
+    let y = rect.bottom() - rect.height() * norm;
+    let handle = Rect::from_center_size(
+        Pos2::new(rect.center().x, y),
+        vec2(rect.width() + 6.0 * c.s, 8.0 * c.s),
+    );
+    ui.painter().rect_filled(
+        handle.expand(2.0 * c.s),
+        corner_radius(3.0 * c.s),
+        Color32::from_rgba_premultiplied(0x4C, 0xFF, 0x74, 0x44),
+    );
+    ui.painter()
+        .rect_filled(handle, corner_radius(3.0 * c.s), METER_GREEN);
+    ui.painter().rect_stroke(
+        handle,
+        corner_radius(3.0 * c.s),
+        Stroke::new(1.0 * c.s, TEXT_PRI),
+        egui::StrokeKind::Outside,
+    );
+
+    if resp.double_clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, 0.0);
+        setter.end_set_parameter(param);
+    } else if resp.clicked() {
+        state.params.push_undo();
+        setter.begin_set_parameter(param);
+        set_level_from_pointer(ui, setter, param, rect);
+        setter.end_set_parameter(param);
+    } else {
+        if resp.drag_started() {
+            state.params.push_undo();
+            setter.begin_set_parameter(param);
+        }
+        if resp.dragged() {
+            set_level_from_pointer(ui, setter, param, rect);
+        }
+        if resp.drag_stopped() {
+            setter.end_set_parameter(param);
+        }
+    }
+
+    let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn set_level_from_pointer(
+    ui: &Ui,
+    setter: &ParamSetter<'_>,
+    param: &nih_plug::params::FloatParam,
+    rect: Rect,
+) {
+    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+        let norm = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
+        setter.set_parameter(param, param.preview_plain(norm));
+    }
+}
+
+fn meter_level_norm(level: f32) -> f32 {
+    meter_db_norm(linear_to_db(level))
+}
+
+fn meter_db_norm(db: f32) -> f32 {
+    ((db.clamp(-60.0, 12.0) + 60.0) / 72.0).clamp(0.0, 1.0)
+}
+
+fn linear_to_db(level: f32) -> f32 {
+    if level <= 0.000_001 {
+        -120.0
+    } else {
+        20.0 * level.abs().log10()
+    }
+}
+
+fn format_meter_db(db: f32) -> String {
+    if db <= -119.0 {
+        "-inf dB".to_string()
+    } else {
+        format!("{db:+.1} dB")
+    }
 }
 
 fn draw_nebula_toolbar(
@@ -5776,6 +5996,8 @@ fn add_midi_learn_menu(_ui: &mut Ui, response: &Response, param_id: &str, state:
 /// Capture the current parameter state as a `ParamSnapshot`.
 fn take_snapshot(params: &NebulaStereoDelayParams) -> ParamSnapshot {
     ParamSnapshot {
+        input_level_db: params.input_level.value(),
+        output_level_db: params.output_level.value(),
         input_mode_l: input_mode_to_index(params.input_mode_l.value()),
         input_mode_r: input_mode_to_index(params.input_mode_r.value()),
         delay_time_l: params.delay_time_l.value(),
@@ -5857,6 +6079,8 @@ fn apply_snapshot(
 
     set_input!(&params.input_mode_l, snap.input_mode_l);
     set_input!(&params.input_mode_r, snap.input_mode_r);
+    set_f!(&params.input_level, snap.input_level_db);
+    set_f!(&params.output_level, snap.output_level_db);
     set_f!(&params.delay_time_l, snap.delay_time_l);
     set_f!(&params.delay_time_r, snap.delay_time_r);
     set_note!(&params.note_l, snap.note_l);
@@ -5897,6 +6121,8 @@ fn preset_values_from_params(params: &NebulaStereoDelayParams) -> PresetValues {
 
 fn preset_values_from_snapshot(snap: &ParamSnapshot) -> PresetValues {
     PresetValues {
+        input_level_db: snap.input_level_db,
+        output_level_db: snap.output_level_db,
         input_mode_l: snap.input_mode_l as u8,
         input_mode_r: snap.input_mode_r as u8,
         delay_time_l: snap.delay_time_l,

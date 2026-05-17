@@ -60,6 +60,11 @@ const FILTER_STAGE_SLOPE_DB: f64 = 6.0;
 /// Enough one-pole stages to cover the 1–100 dB/oct slope range.
 const MAX_FILTER_STAGES: usize = 17;
 
+#[inline]
+fn db_to_gain(db: f64) -> f64 {
+    10.0f64.powf(db / 20.0)
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Public Enums
 // ────────────────────────────────────────────────────────────────────────────
@@ -196,6 +201,12 @@ impl NoteValue {
 /// internally, so it is safe to update them abruptly.
 #[derive(Debug, Clone)]
 pub struct DelayParams {
+    // ── Input/output level trims ─────────────────────────────────────
+    /// Input trim before the delay network, in dB.
+    pub input_level_db: f64,
+    /// Output trim after the delay network, in dB.
+    pub output_level_db: f64,
+
     // ── Input selection ───────────────────────────────────────────────
     /// Input source for the left delay channel.
     pub input_mode_l: InputMode,
@@ -295,6 +306,8 @@ pub struct DelayParams {
 impl Default for DelayParams {
     fn default() -> Self {
         Self {
+            input_level_db: 0.0,
+            output_level_db: 0.0,
             input_mode_l: InputMode::Left,
             input_mode_r: InputMode::Right,
             delay_time_l: 0.5,
@@ -737,6 +750,8 @@ pub struct DelayEngine {
     high_cut_r: ComplementaryFilter,
 
     // ── Smoothed parameters (anti-zipper noise) ───────────────────────
+    smooth_input_gain: SmoothedValue,
+    smooth_output_gain: SmoothedValue,
     smooth_delay_l: SmoothedValue,
     smooth_delay_r: SmoothedValue,
     smooth_low_cut_l: SmoothedValue,
@@ -762,6 +777,17 @@ pub struct DelayEngine {
 
     // ── Config ────────────────────────────────────────────────────────
     config: DelayEngineConfig,
+}
+
+/// One processed stereo frame plus the exact post-trim levels used for meters.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessedFrame {
+    pub output_l: f64,
+    pub output_r: f64,
+    pub input_meter_l: f64,
+    pub input_meter_r: f64,
+    pub output_meter_l: f64,
+    pub output_meter_r: f64,
 }
 
 struct FeedbackInputs {
@@ -811,6 +837,8 @@ impl DelayEngine {
             low_cut_r: ComplementaryFilter::new(),
             high_cut_l: ComplementaryFilter::new(),
             high_cut_r: ComplementaryFilter::new(),
+            smooth_input_gain: SmoothedValue::new(1.0, SMOOTH_SAMPLES),
+            smooth_output_gain: SmoothedValue::new(1.0, SMOOTH_SAMPLES),
             smooth_delay_l: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             smooth_delay_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             smooth_low_cut_l: SmoothedValue::new(20.0, SMOOTH_SAMPLES),
@@ -857,6 +885,9 @@ impl DelayEngine {
         self.high_cut_l.reset();
         self.high_cut_r.reset();
         // Snap smoothers to their current targets (no ramp).
+        self.smooth_input_gain.reset(self.smooth_input_gain.target);
+        self.smooth_output_gain
+            .reset(self.smooth_output_gain.target);
         self.smooth_delay_l.reset(self.smooth_delay_l.target);
         self.smooth_delay_r.reset(self.smooth_delay_r.target);
         self.smooth_low_cut_l.reset(self.smooth_low_cut_l.target);
@@ -903,15 +934,35 @@ impl DelayEngine {
     /// `(left_output, right_output)` in `f64`.  Convert to `f32` at the
     /// very end of the plugin's output stage.
     pub fn process(&mut self, input_l: f64, input_r: f64, params: &DelayParams) -> (f64, f64) {
+        let frame = self.process_frame(input_l, input_r, params);
+        (frame.output_l, frame.output_r)
+    }
+
+    /// Process one stereo sample and return both audio and exact meter taps.
+    pub fn process_frame(
+        &mut self,
+        input_l: f64,
+        input_r: f64,
+        params: &DelayParams,
+    ) -> ProcessedFrame {
         // ── 1. Parameter snapshot ─────────────────────────────────────
         // Stereo Link is handled by the editor/automation layer. The audio
         // engine keeps the left and right values independent so enabling the
         // link never forces both channels to identical settings.
         let p = params.clone();
 
+        let input_gain_target = db_to_gain(p.input_level_db.clamp(-50.0, 50.0));
+        let output_gain_target = db_to_gain(p.output_level_db.clamp(-50.0, 50.0));
+        self.smooth_input_gain.set_target(input_gain_target);
+        self.smooth_output_gain.set_target(output_gain_target);
+        let s_input_gain = self.smooth_input_gain.next();
+        let s_output_gain = self.smooth_output_gain.next();
+        let trimmed_input_l = input_l * s_input_gain;
+        let trimmed_input_r = input_r * s_input_gain;
+
         // ── 2. Input mode selection ───────────────────────────────────
-        let in_l = Self::apply_input_mode(p.input_mode_l, input_l, input_r);
-        let in_r = Self::apply_input_mode(p.input_mode_r, input_l, input_r);
+        let in_l = Self::apply_input_mode(p.input_mode_l, trimmed_input_l, trimmed_input_r);
+        let in_r = Self::apply_input_mode(p.input_mode_r, trimmed_input_l, trimmed_input_r);
 
         // ── 3. Effective delay times ──────────────────────────────────
         let eff_delay_l = Self::effective_delay_time(
@@ -1042,7 +1093,17 @@ impl DelayEngine {
         let out_l = input_l + (out_l - input_l) * s_bypass;
         let out_r = input_r + (out_r - input_r) * s_bypass;
 
-        (out_l, out_r)
+        let out_l = out_l * s_output_gain;
+        let out_r = out_r * s_output_gain;
+
+        ProcessedFrame {
+            output_l: out_l,
+            output_r: out_r,
+            input_meter_l: trimmed_input_l,
+            input_meter_r: trimmed_input_r,
+            output_meter_l: out_l,
+            output_meter_r: out_r,
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -1379,6 +1440,59 @@ mod tests {
             (r - (-0.3)).abs() < 0.01,
             "bypassed right should ≈ dry, got {r}"
         );
+    }
+
+    #[test]
+    fn level_trims_are_transparent_multipliers() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            input_level_db: 6.0,
+            output_level_db: -12.0,
+            output_mix_l: 0.0,
+            output_mix_r: 0.0,
+            ..DelayParams::default()
+        };
+
+        let mut l = 0.0;
+        let mut r = 0.0;
+        for _ in 0..1000 {
+            (l, r) = engine.process(0.25, -0.5, &params);
+        }
+
+        let expected_gain = db_to_gain(params.input_level_db + params.output_level_db);
+        assert!((l - 0.25 * expected_gain).abs() < 1e-6);
+        assert!((r - -0.5 * expected_gain).abs() < 1e-6);
+    }
+
+    #[test]
+    fn process_frame_reports_post_trim_meter_taps() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            input_level_db: 6.0,
+            output_level_db: 3.0,
+            output_mix_l: 0.0,
+            output_mix_r: 0.0,
+            ..DelayParams::default()
+        };
+
+        let mut frame = ProcessedFrame {
+            output_l: 0.0,
+            output_r: 0.0,
+            input_meter_l: 0.0,
+            input_meter_r: 0.0,
+            output_meter_l: 0.0,
+            output_meter_r: 0.0,
+        };
+        for _ in 0..1000 {
+            frame = engine.process_frame(0.25, -0.5, &params);
+        }
+
+        let input_gain = db_to_gain(params.input_level_db);
+        let output_gain = db_to_gain(params.output_level_db);
+        assert!((frame.input_meter_l - 0.25 * input_gain).abs() < 1e-6);
+        assert!((frame.input_meter_r - -0.5 * input_gain).abs() < 1e-6);
+        assert!((frame.output_meter_l - frame.input_meter_l * output_gain).abs() < 1e-6);
+        assert!((frame.output_meter_r - frame.input_meter_r * output_gain).abs() < 1e-6);
     }
 
     #[test]

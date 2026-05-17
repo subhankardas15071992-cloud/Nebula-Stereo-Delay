@@ -73,7 +73,7 @@ use crate::parameters::NebulaStereoDelayParams;
 #[cfg(feature = "plugin")]
 use crate::preset::PresetManager;
 #[cfg(feature = "plugin")]
-use crate::state::StateManager;
+use crate::state::{MeterValues, StateManager};
 
 #[cfg(feature = "plugin")]
 const DENORMAL_THRESHOLD_F64: f64 = 1e-30;
@@ -109,6 +109,7 @@ pub struct NebulaStereoDelay {
     params: Arc<NebulaStereoDelayParams>,
     engine: DelayEngine,
     state_manager: StateManager,
+    meters: Arc<MeterValues>,
     midi_runtime: Arc<MidiRuntime>,
     _preset_manager: PresetManager,
     sample_rate: f64,
@@ -121,14 +122,16 @@ pub struct NebulaStereoDelay {
 impl Default for NebulaStereoDelay {
     fn default() -> Self {
         let params = Arc::new(NebulaStereoDelayParams::default());
+        let meters = Arc::new(MeterValues::new());
         let sample_rate = 44_100.0;
         let mut engine = DelayEngine::new(sample_rate * MAX_OVERSAMPLING_FACTOR as f64);
         engine.set_sample_rate(sample_rate);
 
         Self {
-            state_manager: StateManager::new(params.clone()),
+            state_manager: StateManager::with_meters(params.clone(), meters.clone()),
             engine,
             params,
+            meters,
             midi_runtime: Arc::new(MidiRuntime::new()),
             _preset_manager: PresetManager::new(),
             sample_rate,
@@ -165,7 +168,11 @@ impl Plugin for NebulaStereoDelay {
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         #[cfg(all(feature = "gui", not(target_os = "windows")))]
         {
-            gui::create_egui_editor(self.params.clone(), self.midi_runtime.clone())
+            gui::create_egui_editor(
+                self.params.clone(),
+                self.midi_runtime.clone(),
+                self.meters.clone(),
+            )
         }
 
         #[cfg(any(not(feature = "gui"), target_os = "windows"))]
@@ -188,7 +195,7 @@ impl Plugin for NebulaStereoDelay {
         self.engine.reset();
         self.prev_input_l = 0.0;
         self.prev_input_r = 0.0;
-        self.state_manager = StateManager::new(self.params.clone());
+        self.state_manager = StateManager::with_meters(self.params.clone(), self.meters.clone());
         if let Ok(learn) = self.params.midi_learn.read() {
             sync_runtime_from_learn_state(&self.midi_runtime, &learn);
         }
@@ -328,6 +335,8 @@ impl Plugin for NebulaStereoDelay {
             }
 
             let delay_params = dsp::DelayParams {
+                input_level_db: midi_float!(MidiTarget::InputLevel, input_level),
+                output_level_db: midi_float!(MidiTarget::OutputLevel, output_level),
                 input_mode_l,
                 input_mode_r,
                 delay_time_l: midi_float!(MidiTarget::DelayTimeL, delay_time_l),
@@ -367,9 +376,18 @@ impl Plugin for NebulaStereoDelay {
 
             let in_l = *left as f64;
             let in_r = *right as f64;
+            let mut input_meter_l = 0.0f32;
+            let mut input_meter_r = 0.0f32;
+            let mut output_meter_l = 0.0f32;
+            let mut output_meter_r = 0.0f32;
 
             let (out_l, out_r) = if self.oversampling_factor == 1 {
-                self.engine.process(in_l, in_r, &delay_params)
+                let frame = self.engine.process_frame(in_l, in_r, &delay_params);
+                input_meter_l = input_meter_l.max(frame.input_meter_l.abs() as f32);
+                input_meter_r = input_meter_r.max(frame.input_meter_r.abs() as f32);
+                output_meter_l = output_meter_l.max(frame.output_meter_l.abs() as f32);
+                output_meter_r = output_meter_r.max(frame.output_meter_r.abs() as f32);
+                (frame.output_l, frame.output_r)
             } else {
                 let factor = self.oversampling_factor;
                 let factor_f = factor as f64;
@@ -379,9 +397,13 @@ impl Plugin for NebulaStereoDelay {
                     let t = (sub as f64 + 1.0) / factor_f;
                     let os_in_l = self.prev_input_l + (in_l - self.prev_input_l) * t;
                     let os_in_r = self.prev_input_r + (in_r - self.prev_input_r) * t;
-                    let (y_l, y_r) = self.engine.process(os_in_l, os_in_r, &delay_params);
-                    acc_l += y_l;
-                    acc_r += y_r;
+                    let frame = self.engine.process_frame(os_in_l, os_in_r, &delay_params);
+                    input_meter_l = input_meter_l.max(frame.input_meter_l.abs() as f32);
+                    input_meter_r = input_meter_r.max(frame.input_meter_r.abs() as f32);
+                    output_meter_l = output_meter_l.max(frame.output_meter_l.abs() as f32);
+                    output_meter_r = output_meter_r.max(frame.output_meter_r.abs() as f32);
+                    acc_l += frame.output_l;
+                    acc_r += frame.output_r;
                 }
                 (acc_l / factor_f, acc_r / factor_f)
             };
@@ -397,8 +419,14 @@ impl Plugin for NebulaStereoDelay {
             *left = out_l_f32;
             *right = out_r_f32;
 
-            self.state_manager
-                .update_meters(out_l_f32, out_r_f32, 0.0, 0.0);
+            self.state_manager.update_meters(
+                input_meter_l,
+                input_meter_r,
+                output_meter_l.max(out_l_f32.abs()),
+                output_meter_r.max(out_r_f32.abs()),
+                0.0,
+                0.0,
+            );
         }
 
         ProcessStatus::Normal
