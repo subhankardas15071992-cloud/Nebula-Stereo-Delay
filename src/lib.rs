@@ -82,7 +82,7 @@ const DENORMAL_THRESHOLD_F32: f32 = 1e-30;
 #[cfg(feature = "plugin")]
 const DEFAULT_TEMPO_BPM: f64 = 120.0;
 
-const MIDI_TARGET_COUNT: usize = 32;
+const MIDI_TARGET_COUNT: usize = 33;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(usize)]
@@ -113,7 +113,8 @@ enum MidiTarget {
     FeedbackPhaseR,
     CrossfeedLr,
     CrossfeedRl,
-    CrossfeedPhase,
+    CrossfeedPhaseLr,
+    CrossfeedPhaseRl,
     Routing,
     TempoSync,
     StereoLink,
@@ -150,7 +151,8 @@ impl MidiTarget {
             "feedback_phase_r" => Some(Self::FeedbackPhaseR),
             "crossfeed_l_r" => Some(Self::CrossfeedLr),
             "crossfeed_r_l" => Some(Self::CrossfeedRl),
-            "crossfeed_phase" => Some(Self::CrossfeedPhase),
+            "crossfeed_phase" | "crossfeed_phase_l_r" => Some(Self::CrossfeedPhaseLr),
+            "crossfeed_phase_r_l" => Some(Self::CrossfeedPhaseRl),
             "routing" => Some(Self::Routing),
             "tempo_sync" => Some(Self::TempoSync),
             "stereo_link" => Some(Self::StereoLink),
@@ -337,11 +339,16 @@ impl Plugin for NebulaStereoDelay {
             .get(MidiTarget::FeedbackPhaseR)
             .map(|v| self.params.feedback_phase_r.preview_plain(v))
             .unwrap_or_else(|| self.params.feedback_phase_r.value());
-        let crossfeed_phase = self
+        let crossfeed_phase_lr = self
             .midi_overrides
-            .get(MidiTarget::CrossfeedPhase)
-            .map(|v| self.params.crossfeed_phase.preview_plain(v))
-            .unwrap_or_else(|| self.params.crossfeed_phase.value());
+            .get(MidiTarget::CrossfeedPhaseLr)
+            .map(|v| self.params.crossfeed_phase_lr.preview_plain(v))
+            .unwrap_or_else(|| self.params.crossfeed_phase_lr.value());
+        let crossfeed_phase_rl = self
+            .midi_overrides
+            .get(MidiTarget::CrossfeedPhaseRl)
+            .map(|v| self.params.crossfeed_phase_rl.preview_plain(v))
+            .unwrap_or_else(|| self.params.crossfeed_phase_rl.value());
         let routing = self
             .midi_overrides
             .get(MidiTarget::Routing)
@@ -425,7 +432,8 @@ impl Plugin for NebulaStereoDelay {
                 feedback_phase_r,
                 crossfeed_lr: midi_float!(MidiTarget::CrossfeedLr, crossfeed_lr),
                 crossfeed_rl: midi_float!(MidiTarget::CrossfeedRl, crossfeed_rl),
-                crossfeed_phase,
+                crossfeed_phase_lr,
+                crossfeed_phase_rl,
                 routing,
                 tempo_sync,
                 tempo_bpm,

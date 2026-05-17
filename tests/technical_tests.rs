@@ -637,7 +637,7 @@ fn parameter_automaton_test() {
                 }
                 2 => {
                     // Sweep delay time.
-                    params.delay_time_l = 0.05 + ((i as f64 / total_samples as f64) * 2.0);
+                    params.delay_time_l = 0.005 + ((i as f64 / total_samples as f64) * 1.995);
                     params.delay_time_r = params.delay_time_l;
                 }
                 3 => {
@@ -1020,10 +1020,20 @@ fn randomized_fuzz_test() {
     let note_values: &[NoteValue] = &[
         NoteValue::Whole,
         NoteValue::Half,
+        NoteValue::HalfTriplet,
+        NoteValue::HalfDotted,
         NoteValue::Quarter,
+        NoteValue::QuarterTriplet,
+        NoteValue::QuarterDotted,
         NoteValue::Eighth,
+        NoteValue::EighthTriplet,
+        NoteValue::EighthDotted,
         NoteValue::Sixteenth,
+        NoteValue::SixteenthTriplet,
+        NoteValue::SixteenthDotted,
         NoteValue::ThirtySecond,
+        NoteValue::ThirtySecondTriplet,
+        NoteValue::ThirtySecondDotted,
         NoteValue::SixtyFourth,
     ];
 
@@ -1036,8 +1046,8 @@ fn randomized_fuzz_test() {
         let params = DelayParams {
             input_mode_l: input_modes[prng.next_u64() as usize % input_modes.len()],
             input_mode_r: input_modes[prng.next_u64() as usize % input_modes.len()],
-            delay_time_l: prng.next_range(0.0, 10.0),
-            delay_time_r: prng.next_range(0.0, 10.0),
+            delay_time_l: prng.next_range(0.005, 2.0),
+            delay_time_r: prng.next_range(0.005, 2.0),
             low_cut_l: prng.next_range(20.0, 20000.0),
             low_cut_r: prng.next_range(20.0, 20000.0),
             low_cut_slope_l: prng.next_range(1.0, 100.0),
@@ -1052,7 +1062,8 @@ fn randomized_fuzz_test() {
             feedback_phase_r: prng.next_u64() % 2 == 0,
             crossfeed_lr: prng.next_range(0.0, 1.0),
             crossfeed_rl: prng.next_range(0.0, 1.0),
-            crossfeed_phase: prng.next_u64() % 2 == 0,
+            crossfeed_phase_lr: prng.next_u64() % 2 == 0,
+            crossfeed_phase_rl: prng.next_u64() % 2 == 0,
             routing: routing_modes[prng.next_u64() as usize % routing_modes.len()],
             tempo_sync: prng.next_u64() % 2 == 0,
             tempo_bpm: prng.next_range(20.0, 300.0),

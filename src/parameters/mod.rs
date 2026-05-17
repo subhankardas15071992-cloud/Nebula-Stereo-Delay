@@ -11,7 +11,7 @@
 //! |---------------------|---------------------------------------------------------|
 //! | Per-Channel (L/R)   | Input mode, delay time, note, deviation, halve/double,  |
 //! |                     | low/high cut, feedback, feedback phase                   |
-//! | Crossfeed           | L→R amount, R→L amount, crossfeed phase                 |
+//! | Crossfeed           | L→R amount/phase, R→L amount/phase                     |
 //! | Global / Output     | Routing, tempo sync, stereo link, output mix            |
 //! | Internal State      | FX bypass, A/B snapshots, undo/redo, MIDI learn         |
 //!
@@ -78,8 +78,9 @@ impl From<InputModeParam> for dsp::InputMode {
 /// Musical note values for tempo-sync quantisation.
 ///
 /// Each variant maps to a rhythmic subdivision. `T` variants are **triplet**
-/// divisions (2/3 of the straight value). The index order matches the
-/// plugin's UI ordering (1/1, 1/2, 1/2T, 1/4, …).
+/// divisions (2/3 of the straight value), and `.` variants are dotted notes.
+/// The enum order preserves host/preset indices; the custom editor presents
+/// these as a short-to-long note menu and ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum NoteValueParam {
     #[id = "1/1"]
@@ -118,6 +119,21 @@ pub enum NoteValueParam {
     #[id = "1/64"]
     #[name = "1/64"]
     SixtyFourth,
+    #[id = "1/2."]
+    #[name = "1/2."]
+    HalfDotted,
+    #[id = "1/4."]
+    #[name = "1/4."]
+    QuarterDotted,
+    #[id = "1/8."]
+    #[name = "1/8."]
+    EighthDotted,
+    #[id = "1/16."]
+    #[name = "1/16."]
+    SixteenthDotted,
+    #[id = "1/32."]
+    #[name = "1/32."]
+    ThirtySecondDotted,
 }
 
 impl From<NoteValueParam> for dsp::NoteValue {
@@ -136,6 +152,11 @@ impl From<NoteValueParam> for dsp::NoteValue {
             NoteValueParam::ThirtySecond => dsp::NoteValue::ThirtySecond,
             NoteValueParam::ThirtySecondTriplet => dsp::NoteValue::ThirtySecondTriplet,
             NoteValueParam::SixtyFourth => dsp::NoteValue::SixtyFourth,
+            NoteValueParam::HalfDotted => dsp::NoteValue::HalfDotted,
+            NoteValueParam::QuarterDotted => dsp::NoteValue::QuarterDotted,
+            NoteValueParam::EighthDotted => dsp::NoteValue::EighthDotted,
+            NoteValueParam::SixteenthDotted => dsp::NoteValue::SixteenthDotted,
+            NoteValueParam::ThirtySecondDotted => dsp::NoteValue::ThirtySecondDotted,
         }
     }
 }
@@ -227,7 +248,10 @@ pub struct ParamSnapshot {
     // ── Crossfeed ────────────────────────────────────────────────────
     pub crossfeed_lr: f32,
     pub crossfeed_rl: f32,
-    pub crossfeed_phase: bool,
+    #[serde(default, alias = "crossfeed_phase")]
+    pub crossfeed_phase_lr: bool,
+    #[serde(default)]
+    pub crossfeed_phase_rl: bool,
 
     // ── Global / Output ──────────────────────────────────────────────
     pub routing: usize,
@@ -284,7 +308,8 @@ impl ParamSnapshot {
             feedback_phase_r: false,
             crossfeed_lr: 0.0,
             crossfeed_rl: 0.0,
-            crossfeed_phase: false,
+            crossfeed_phase_lr: false,
+            crossfeed_phase_rl: false,
             routing: 0, // Customized
             tempo_sync: false,
             stereo_link: false,
@@ -474,12 +499,12 @@ pub struct NebulaStereoDelayParams {
     pub input_mode_r: EnumParam<InputModeParam>,
 
     // ── Per-Channel: Delay Time ──────────────────────────────────────────
-    /// Base delay time for the left channel in seconds (0.01–10.0).
+    /// Base delay time for the left channel in seconds (0.005–2.0).
     /// Used when `tempo_sync` is off. Default: 0.5 s.
     #[id = "dtl"]
     pub delay_time_l: FloatParam,
 
-    /// Base delay time for the right channel in seconds (0.01–10.0).
+    /// Base delay time for the right channel in seconds (0.005–2.0).
     /// Used when `tempo_sync` is off. Default: 0.5 s.
     #[id = "dtr"]
     pub delay_time_r: FloatParam,
@@ -597,10 +622,13 @@ pub struct NebulaStereoDelayParams {
     #[id = "crl"]
     pub crossfeed_rl: FloatParam,
 
-    /// Invert crossfeed phase (applies to both L→R and R→L paths).
-    /// Display: "Normal" / "Inverted". Default: Normal.
+    /// Invert the L→R crossfeed phase. Default: Normal.
     #[id = "cfp"]
-    pub crossfeed_phase: BoolParam,
+    pub crossfeed_phase_lr: BoolParam,
+
+    /// Invert the R→L crossfeed phase. Default: Normal.
+    #[id = "cfpr"]
+    pub crossfeed_phase_rl: BoolParam,
 
     // ── Global: Routing ──────────────────────────────────────────────────
     /// Active routing mode. Default: Customized.
@@ -685,8 +713,8 @@ impl Default for NebulaStereoDelayParams {
                 "Delay Time L",
                 0.5,
                 FloatRange::Linear {
-                    min: 0.01,
-                    max: 10.0,
+                    min: 0.005,
+                    max: 2.0,
                 },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
@@ -699,8 +727,8 @@ impl Default for NebulaStereoDelayParams {
                 "Delay Time R",
                 0.5,
                 FloatRange::Linear {
-                    min: 0.01,
-                    max: 10.0,
+                    min: 0.005,
+                    max: 2.0,
                 },
             )
             .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
@@ -988,7 +1016,20 @@ impl Default for NebulaStereoDelayParams {
             .with_string_to_value(Arc::new(parse_percentage))
             .with_unit("%"),
 
-            crossfeed_phase: BoolParam::new("Crossfeed Phase", false)
+            crossfeed_phase_lr: BoolParam::new("Crossfeed Phase L-R", false)
+                .with_value_to_string(Arc::new(|v| {
+                    if v {
+                        "Inverted".to_string()
+                    } else {
+                        "Normal".to_string()
+                    }
+                }))
+                .with_string_to_value(Arc::new(|s| {
+                    let s = s.trim().to_lowercase();
+                    Some(s == "inverted" || s == "inv" || s == "on" || s == "true")
+                })),
+
+            crossfeed_phase_rl: BoolParam::new("Crossfeed Phase R-L", false)
                 .with_value_to_string(Arc::new(|v| {
                     if v {
                         "Inverted".to_string()
@@ -1113,7 +1154,8 @@ impl NebulaStereoDelayParams {
             feedback_phase_r: self.feedback_phase_r.value(),
             crossfeed_lr: self.crossfeed_lr.value(),
             crossfeed_rl: self.crossfeed_rl.value(),
-            crossfeed_phase: self.crossfeed_phase.value(),
+            crossfeed_phase_lr: self.crossfeed_phase_lr.value(),
+            crossfeed_phase_rl: self.crossfeed_phase_rl.value(),
             routing: self.routing.value().to_index(),
             tempo_sync: self.tempo_sync.value(),
             stereo_link: self.stereo_link.value(),
@@ -1170,7 +1212,8 @@ impl NebulaStereoDelayParams {
         setter.set_parameter(&self.double_r, snapshot.double_r);
         setter.set_parameter(&self.feedback_phase_l, snapshot.feedback_phase_l);
         setter.set_parameter(&self.feedback_phase_r, snapshot.feedback_phase_r);
-        setter.set_parameter(&self.crossfeed_phase, snapshot.crossfeed_phase);
+        setter.set_parameter(&self.crossfeed_phase_lr, snapshot.crossfeed_phase_lr);
+        setter.set_parameter(&self.crossfeed_phase_rl, snapshot.crossfeed_phase_rl);
         setter.set_parameter(&self.tempo_sync, snapshot.tempo_sync);
         setter.set_parameter(&self.stereo_link, snapshot.stereo_link);
 
@@ -1338,7 +1381,8 @@ impl NebulaStereoDelayParams {
             feedback_phase_r: self.feedback_phase_r.value(),
             crossfeed_lr: self.crossfeed_lr.value() as f64,
             crossfeed_rl: self.crossfeed_rl.value() as f64,
-            crossfeed_phase: self.crossfeed_phase.value(),
+            crossfeed_phase_lr: self.crossfeed_phase_lr.value(),
+            crossfeed_phase_rl: self.crossfeed_phase_rl.value(),
             routing: self.routing.value().into(),
             tempo_sync: self.tempo_sync.value(),
             tempo_bpm,
@@ -1378,7 +1422,7 @@ mod tests {
 
     #[test]
     fn note_value_param_round_trip() {
-        for i in 0..12 {
+        for i in 0..17 {
             let param = NoteValueParam::from_index(i);
             assert_eq!(param.to_index(), i);
         }
@@ -1428,6 +1472,10 @@ mod tests {
             dsp::NoteValue::from(NoteValueParam::EighthTriplet),
             dsp::NoteValue::EighthTriplet
         );
+        assert_eq!(
+            dsp::NoteValue::from(NoteValueParam::EighthDotted),
+            dsp::NoteValue::EighthDotted
+        );
     }
 
     #[test]
@@ -1447,8 +1495,8 @@ mod tests {
     #[test]
     fn format_delay_time_values() {
         assert_eq!(format_delay_time(0.5), "500.0");
-        assert_eq!(format_delay_time(0.01), "10.0");
-        assert_eq!(format_delay_time(10.0), "10000.0");
+        assert_eq!(format_delay_time(0.005), "5.0");
+        assert_eq!(format_delay_time(2.0), "2000.0");
     }
 
     #[test]
@@ -1456,7 +1504,7 @@ mod tests {
         assert_eq!(parse_delay_time("500"), Some(0.5));
         assert_eq!(parse_delay_time("500 ms"), Some(0.5));
         assert_eq!(parse_delay_time("0.500 s"), Some(0.5));
-        assert_eq!(parse_delay_time("10.0s"), Some(10.0));
+        assert_eq!(parse_delay_time("2.0s"), Some(2.0));
     }
 
     #[test]

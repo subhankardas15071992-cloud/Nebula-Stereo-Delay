@@ -34,8 +34,11 @@ use std::f64::consts::TAU;
 // Constants
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Maximum delay time in seconds (supports up to 10 s at any sample rate).
-const MAX_DELAY_SECS: f64 = 10.0;
+/// Minimum delay time in seconds (5 ms).
+const MIN_DELAY_SECS: f64 = 0.005;
+
+/// Maximum delay time in seconds (2 seconds).
+const MAX_DELAY_SECS: f64 = 2.0;
 
 /// Number of samples for parameter-smoothing ramps (anti-zipper noise).
 const SMOOTH_SAMPLES: u64 = 64;
@@ -140,6 +143,16 @@ pub enum NoteValue {
     ThirtySecondTriplet,
     /// Sixty-fourth note (1/64) — 0.0625 beats.
     SixtyFourth,
+    /// Dotted half note (1/2.) — 3 beats.
+    HalfDotted,
+    /// Dotted quarter note (1/4.) — 1.5 beats.
+    QuarterDotted,
+    /// Dotted eighth note (1/8.) — 0.75 beats.
+    EighthDotted,
+    /// Dotted sixteenth note (1/16.) — 0.375 beats.
+    SixteenthDotted,
+    /// Dotted thirty-second note (1/32.) — 0.1875 beats.
+    ThirtySecondDotted,
 }
 
 impl NoteValue {
@@ -163,6 +176,11 @@ impl NoteValue {
             NoteValue::ThirtySecond => 0.125,
             NoteValue::ThirtySecondTriplet => 1.0 / 12.0,
             NoteValue::SixtyFourth => 0.0625,
+            NoteValue::HalfDotted => 3.0,
+            NoteValue::QuarterDotted => 1.5,
+            NoteValue::EighthDotted => 0.75,
+            NoteValue::SixteenthDotted => 0.375,
+            NoteValue::ThirtySecondDotted => 0.1875,
         };
         let safe_bpm = bpm.max(1.0);
         (beats / safe_bpm) * 60.0
@@ -225,8 +243,10 @@ pub struct DelayParams {
     pub crossfeed_lr: f64,
     /// R→L crossfeed amount (0.0 – 1.0).
     pub crossfeed_rl: f64,
-    /// Invert crossfeed phase (applies to both L→R and R→L paths).
-    pub crossfeed_phase: bool,
+    /// Invert the L→R crossfeed path.
+    pub crossfeed_phase_lr: bool,
+    /// Invert the R→L crossfeed path.
+    pub crossfeed_phase_rl: bool,
 
     // ── Routing ───────────────────────────────────────────────────────
     /// Active routing mode.
@@ -294,7 +314,8 @@ impl Default for DelayParams {
             feedback_phase_r: false,
             crossfeed_lr: 0.0,
             crossfeed_rl: 0.0,
-            crossfeed_phase: false,
+            crossfeed_phase_lr: false,
+            crossfeed_phase_rl: false,
             routing: RoutingMode::default(),
             tempo_sync: false,
             tempo_bpm: 120.0,
@@ -756,7 +777,8 @@ struct FeedbackInputs {
     cf_rl: f64,
     sign_l: f64,
     sign_r: f64,
-    sign_cf: f64,
+    sign_cf_lr: f64,
+    sign_cf_rl: f64,
     filt_l: f64,
     filt_r: f64,
 }
@@ -900,6 +922,7 @@ impl DelayEngine {
                 feedback_r: params.feedback_l,
                 feedback_phase_r: params.feedback_phase_l,
                 crossfeed_rl: params.crossfeed_lr, // symmetric
+                crossfeed_phase_rl: params.crossfeed_phase_lr,
                 note_r: params.note_l,
                 deviation_r: params.deviation_l,
                 halve_r: params.halve_l,
@@ -1008,7 +1031,8 @@ impl DelayEngine {
         // ── 9. Compute phase-inversion sign bits ──────────────────────
         let sign_l: f64 = if p.feedback_phase_l { -1.0 } else { 1.0 };
         let sign_r: f64 = if p.feedback_phase_r { -1.0 } else { 1.0 };
-        let sign_cf: f64 = if p.crossfeed_phase { -1.0 } else { 1.0 };
+        let sign_cf_lr: f64 = if p.crossfeed_phase_lr { -1.0 } else { 1.0 };
+        let sign_cf_rl: f64 = if p.crossfeed_phase_rl { -1.0 } else { 1.0 };
 
         // ── 10. Routing: compute feedback signals for each delay line ──
         let (fb_to_l, fb_to_r) = Self::compute_feedback(FeedbackInputs {
@@ -1019,7 +1043,8 @@ impl DelayEngine {
             cf_rl: s_cf_rl,
             sign_l,
             sign_r,
-            sign_cf,
+            sign_cf_lr,
+            sign_cf_rl,
             filt_l,
             filt_r,
         });
@@ -1071,7 +1096,7 @@ impl DelayEngine {
     /// Compute the effective delay time in seconds, accounting for tempo
     /// sync, deviation, and the /:2 and ×2 modifiers.
     ///
-    /// Returns a value clamped to `[0, MAX_DELAY_SECS]`.
+    /// Returns a value clamped to `[MIN_DELAY_SECS, MAX_DELAY_SECS]`.
     fn effective_delay_time(
         base_time: f64,
         tempo_sync: bool,
@@ -1100,7 +1125,7 @@ impl DelayEngine {
             t *= 2.0;
         }
 
-        t.clamp(0.0, MAX_DELAY_SECS)
+        t.clamp(MIN_DELAY_SECS, MAX_DELAY_SECS)
     }
 
     /// Compute the feedback signal that will be added to each delay
@@ -1130,7 +1155,8 @@ impl DelayEngine {
             cf_rl,
             sign_l,
             sign_r,
-            sign_cf,
+            sign_cf_lr,
+            sign_cf_rl,
             filt_l,
             filt_r,
         } = inputs;
@@ -1138,8 +1164,8 @@ impl DelayEngine {
         // Pre-compute the basic signal contributions.
         let self_l = filt_l * fb_l * sign_l;
         let self_r = filt_r * fb_r * sign_r;
-        let cross_lr = filt_l * cf_lr * sign_cf; // L→R
-        let cross_rl = filt_r * cf_rl * sign_cf; // R→L
+        let cross_lr = filt_l * cf_lr * sign_cf_lr; // L→R
+        let cross_rl = filt_r * cf_rl * sign_cf_rl; // R→L
 
         match routing {
             RoutingMode::Customized => {
@@ -1154,29 +1180,33 @@ impl DelayEngine {
 
             RoutingMode::Crossfeed => {
                 // All feedback crosses to opposite channel (no self).
-                let cross_l_to_r = filt_l * fb_l * sign_l;
-                let cross_r_to_l = filt_r * fb_r * sign_r;
+                let cross_l_to_r = filt_l * fb_l * sign_l * sign_cf_lr;
+                let cross_r_to_l = filt_r * fb_r * sign_r * sign_cf_rl;
                 (cross_r_to_l, cross_l_to_r)
             }
 
             RoutingMode::NinetyTen => {
                 // 90 % self, 10 % cross.
-                let fb_to_l = filt_l * fb_l * sign_l * 0.9 + filt_r * fb_r * sign_r * 0.1;
-                let fb_to_r = filt_r * fb_r * sign_r * 0.9 + filt_l * fb_l * sign_l * 0.1;
+                let fb_to_l =
+                    filt_l * fb_l * sign_l * 0.9 + filt_r * fb_r * sign_r * sign_cf_rl * 0.1;
+                let fb_to_r =
+                    filt_r * fb_r * sign_r * 0.9 + filt_l * fb_l * sign_l * sign_cf_lr * 0.1;
                 (fb_to_l, fb_to_r)
             }
 
             RoutingMode::TenNinety => {
                 // 10 % self, 90 % cross.
-                let fb_to_l = filt_l * fb_l * sign_l * 0.1 + filt_r * fb_r * sign_r * 0.9;
-                let fb_to_r = filt_r * fb_r * sign_r * 0.1 + filt_l * fb_l * sign_l * 0.9;
+                let fb_to_l =
+                    filt_l * fb_l * sign_l * 0.1 + filt_r * fb_r * sign_r * sign_cf_rl * 0.9;
+                let fb_to_r =
+                    filt_r * fb_r * sign_r * 0.1 + filt_l * fb_l * sign_l * sign_cf_lr * 0.9;
                 (fb_to_l, fb_to_r)
             }
 
             RoutingMode::PingPong => {
                 // Cross only, no self-feedback (signal bounces L↔R).
-                let cross_l_to_r = filt_l * fb_l * sign_l;
-                let cross_r_to_l = filt_r * fb_r * sign_r;
+                let cross_l_to_r = filt_l * fb_l * sign_l * sign_cf_lr;
+                let cross_r_to_l = filt_r * fb_r * sign_r * sign_cf_rl;
                 (cross_r_to_l, cross_l_to_r)
             }
 

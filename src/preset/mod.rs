@@ -153,7 +153,10 @@ pub struct PresetValues {
     // ── Crossfeed (0.0–1.0) ────────────────────────────────────────────
     pub crossfeed_lr: f32,
     pub crossfeed_rl: f32,
-    pub crossfeed_phase: bool,
+    #[serde(default, alias = "crossfeed_phase")]
+    pub crossfeed_phase_lr: bool,
+    #[serde(default)]
+    pub crossfeed_phase_rl: bool,
 
     // ── Global ─────────────────────────────────────────────────────────
     pub routing: u8,
@@ -192,7 +195,8 @@ impl Default for PresetValues {
             feedback_phase_r: false,
             crossfeed_lr: 0.0,
             crossfeed_rl: 0.0,
-            crossfeed_phase: false,
+            crossfeed_phase_lr: false,
+            crossfeed_phase_rl: false,
             routing: 0, // Customized
             tempo_sync: false,
             stereo_link: false,
@@ -377,7 +381,8 @@ impl PresetManager {
         // ── Crossfeed ───────────────────────────────────────────────
         setter.set_parameter(&params.crossfeed_lr, v.crossfeed_lr);
         setter.set_parameter(&params.crossfeed_rl, v.crossfeed_rl);
-        setter.set_parameter(&params.crossfeed_phase, v.crossfeed_phase);
+        setter.set_parameter(&params.crossfeed_phase_lr, v.crossfeed_phase_lr);
+        setter.set_parameter(&params.crossfeed_phase_rl, v.crossfeed_phase_rl);
 
         // ── Global ──────────────────────────────────────────────────
         setter.set_parameter(
@@ -508,7 +513,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0,
                 crossfeed_rl: 0.0,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 0, // Customized
                 tempo_sync: false,
                 stereo_link: false,
@@ -552,7 +558,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0,
                 crossfeed_rl: 0.0,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 1, // Straight
                 tempo_sync: false,
                 stereo_link: false,
@@ -597,7 +604,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.3, // Crossfeed for spatial depth
                 crossfeed_rl: 0.3,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 0, // Customized (crossfeed via manual amounts)
                 tempo_sync: true,
                 stereo_link: false,
@@ -642,7 +650,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0, // Not used in Ping Pong routing
                 crossfeed_rl: 0.0,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 5, // Ping Pong
                 tempo_sync: true,
                 stereo_link: true,
@@ -687,7 +696,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0, // Not used in Rotate routing
                 crossfeed_rl: 0.0,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 7, // Rotate
                 tempo_sync: false,
                 stereo_link: true,
@@ -732,7 +742,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.15, // Subtle crossfeed for cohesion
                 crossfeed_rl: 0.15,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 0, // Customized
                 tempo_sync: false,
                 stereo_link: false,
@@ -779,7 +790,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.1, // Subtle crossfeed between tape heads
                 crossfeed_rl: 0.1,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 0, // Customized
                 tempo_sync: true,
                 stereo_link: false,
@@ -825,8 +837,9 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.4, // Significant crossfeed for width
                 crossfeed_rl: 0.4,
-                crossfeed_phase: true, // Inverted phase enhances stereo width
-                routing: 0,            // Customized
+                crossfeed_phase_lr: true, // Inverted phase enhances stereo width
+                crossfeed_phase_rl: true,
+                routing: 0, // Customized
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 0.65,
@@ -871,7 +884,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.15, // Slight crossfeed for cohesion
                 crossfeed_rl: 0.15,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 3,       // 90/10 — mostly self-feedback with hint of cross
                 tempo_sync: true, // Essential for rhythmic use
                 stereo_link: false,
@@ -917,7 +931,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 feedback_phase_r: false,
                 crossfeed_lr: 0.0,
                 crossfeed_rl: 0.0,
-                crossfeed_phase: false,
+                crossfeed_phase_lr: false,
+                crossfeed_phase_rl: false,
                 routing: 3, // 90/10 — mostly straight with subtle cross
                 tempo_sync: true,
                 stereo_link: false,
@@ -1205,7 +1220,8 @@ mod tests {
             .iter()
             .find(|p| p.name == "Stereo Widener")
             .unwrap();
-        assert!(sw.values.crossfeed_phase);
+        assert!(sw.values.crossfeed_phase_lr);
+        assert!(sw.values.crossfeed_phase_rl);
         assert!(sw.values.crossfeed_lr > 0.0);
         assert!(sw.values.crossfeed_rl > 0.0);
     }

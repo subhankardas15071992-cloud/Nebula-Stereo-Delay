@@ -68,7 +68,7 @@ Click MIDI, click a control, then move a MIDI controller. The next CC maps to th
 The FX bypass crossfades over 512 samples. No clicks. No pops. No hard cuts.
 
 ### Freely Scalable GUI
-Built with egui on macOS and Linux. The window starts at 1200x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark professional theme with a cyan accent palette matching the Nebula Audio family. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
+Built with egui on macOS and Linux. The window starts at 900x700 and scales freely — every element resizes proportionally. DPI-aware on high-resolution displays. Dark Nebula-family theme with cyan, magenta, orange, and purple control accents. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
 
 ---
 
@@ -128,8 +128,8 @@ Input ──► Input Mode Selection ──► ───────────
 | Parameter | Range | Default |
 |-----------|-------|---------|
 | Input Mode | Off / Left / Right / L+R / L-R | Left (L) / Right (R) |
-| Delay Time | 0.01 – 10.0 s | 0.5 s |
-| Note (sync) | 1/1 – 1/64 (incl. triplets) | 1/4 |
+| Delay Time | 0.005 – 2.0 s | 0.5 s |
+| Note (sync) | 1/1 – 1/64 (incl. triplets and dotted values) | 1/4 |
 | Deviation | -100 – +100 ct | 0 ct |
 | :2 / x2 | On / Off | Off |
 | Low Cut | 20 – 20 000 Hz | 20 Hz |
@@ -142,7 +142,7 @@ Input ──► Input Mode Selection ──► ───────────
 | Parameter | Range | Default |
 |-----------|-------|---------|
 | L/R → R/L | 0 – 100 % | 0 % |
-| Crossfeed Phase | Normal / Inverted | Normal |
+| Crossfeed Phase L-R / R-L | Normal / Inverted | Normal |
 
 ### Global / Output
 
