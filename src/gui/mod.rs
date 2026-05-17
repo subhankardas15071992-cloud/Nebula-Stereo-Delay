@@ -724,6 +724,7 @@ fn draw_nebula_delay(
         TEXT_SEC,
     );
     let delay_r = 36.0;
+    let knob_cy = cy - 7.0;
     logic_delay_knob(
         ui,
         state,
@@ -731,7 +732,7 @@ fn draw_nebula_delay(
         c,
         ch,
         cx,
-        cy,
+        knob_cy,
         delay_r,
         &format!("{id}_delay"),
     );
