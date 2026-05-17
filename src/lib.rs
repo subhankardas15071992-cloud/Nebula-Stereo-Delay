@@ -81,8 +81,10 @@ const DENORMAL_THRESHOLD_F64: f64 = 1e-30;
 const DENORMAL_THRESHOLD_F32: f32 = 1e-30;
 #[cfg(feature = "plugin")]
 const DEFAULT_TEMPO_BPM: f64 = 120.0;
+#[cfg(feature = "plugin")]
+const MAX_OVERSAMPLING_FACTOR: usize = 8;
 
-const MIDI_TARGET_COUNT: usize = 33;
+const MIDI_TARGET_COUNT: usize = 34;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(usize)]
@@ -120,6 +122,7 @@ enum MidiTarget {
     StereoLink,
     OutputMixL,
     OutputMixR,
+    Oversampling,
 }
 
 impl MidiTarget {
@@ -158,6 +161,7 @@ impl MidiTarget {
             "stereo_link" => Some(Self::StereoLink),
             "output_mix_l" => Some(Self::OutputMixL),
             "output_mix_r" => Some(Self::OutputMixR),
+            "oversampling" => Some(Self::Oversampling),
             _ => None,
         }
     }
@@ -217,6 +221,9 @@ pub struct NebulaStereoDelay {
     midi_overrides: MidiOverrides,
     _preset_manager: PresetManager,
     sample_rate: f64,
+    oversampling_factor: usize,
+    prev_input_l: f64,
+    prev_input_r: f64,
 }
 
 #[cfg(feature = "plugin")]
@@ -224,15 +231,20 @@ impl Default for NebulaStereoDelay {
     fn default() -> Self {
         let params = Arc::new(NebulaStereoDelayParams::default());
         let sample_rate = 44_100.0;
+        let mut engine = DelayEngine::new(sample_rate * MAX_OVERSAMPLING_FACTOR as f64);
+        engine.set_sample_rate(sample_rate);
 
         Self {
             state_manager: StateManager::new(params.clone()),
-            engine: DelayEngine::new(sample_rate),
+            engine,
             params,
             midi_cc: MidiCcValues::new(),
             midi_overrides: MidiOverrides::default(),
             _preset_manager: PresetManager::new(),
             sample_rate,
+            oversampling_factor: 1,
+            prev_input_l: 0.0,
+            prev_input_r: 0.0,
         }
     }
 }
@@ -279,8 +291,13 @@ impl Plugin for NebulaStereoDelay {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
-        self.engine = DelayEngine::new(self.sample_rate);
+        self.oversampling_factor = self.params.oversampling.value().factor();
+        self.engine = DelayEngine::new(self.sample_rate * MAX_OVERSAMPLING_FACTOR as f64);
+        self.engine
+            .set_sample_rate(self.sample_rate * self.oversampling_factor as f64);
         self.engine.reset();
+        self.prev_input_l = 0.0;
+        self.prev_input_r = 0.0;
         self.state_manager = StateManager::new(self.params.clone());
         true
     }
@@ -394,6 +411,19 @@ impl Plugin for NebulaStereoDelay {
             .get(MidiTarget::StereoLink)
             .map(|v| self.params.stereo_link.preview_plain(v))
             .unwrap_or_else(|| self.params.stereo_link.value());
+        let oversampling_factor = self
+            .midi_overrides
+            .get(MidiTarget::Oversampling)
+            .map(|v| self.params.oversampling.preview_plain(v).factor())
+            .unwrap_or_else(|| self.params.oversampling.value().factor());
+        if oversampling_factor != self.oversampling_factor {
+            self.oversampling_factor = oversampling_factor;
+            self.engine
+                .set_sample_rate(self.sample_rate * self.oversampling_factor as f64);
+            self.engine.reset();
+            self.prev_input_l = 0.0;
+            self.prev_input_r = 0.0;
+        }
 
         for mut sample in buffer.iter_samples() {
             let mut channels = sample.iter_mut();
@@ -454,7 +484,25 @@ impl Plugin for NebulaStereoDelay {
             let in_l = *left as f64;
             let in_r = *right as f64;
 
-            let (out_l, out_r) = self.engine.process(in_l, in_r, &delay_params);
+            let (out_l, out_r) = if self.oversampling_factor == 1 {
+                self.engine.process(in_l, in_r, &delay_params)
+            } else {
+                let factor = self.oversampling_factor;
+                let factor_f = factor as f64;
+                let mut acc_l = 0.0;
+                let mut acc_r = 0.0;
+                for sub in 0..factor {
+                    let t = (sub as f64 + 1.0) / factor_f;
+                    let os_in_l = self.prev_input_l + (in_l - self.prev_input_l) * t;
+                    let os_in_r = self.prev_input_r + (in_r - self.prev_input_r) * t;
+                    let (y_l, y_r) = self.engine.process(os_in_l, os_in_r, &delay_params);
+                    acc_l += y_l;
+                    acc_r += y_r;
+                }
+                (acc_l / factor_f, acc_r / factor_f)
+            };
+            self.prev_input_l = in_l;
+            self.prev_input_r = in_r;
 
             let out_l = flush_denormal_f64(out_l);
             let out_r = flush_denormal_f64(out_r);

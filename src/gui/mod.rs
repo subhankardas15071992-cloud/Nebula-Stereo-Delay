@@ -52,7 +52,8 @@ use nih_plug_egui::egui::{
 use nih_plug_egui::EguiState;
 
 use crate::parameters::{
-    InputModeParam, NebulaStereoDelayParams, NoteValueParam, ParamSnapshot, RoutingModeParam,
+    InputModeParam, NebulaStereoDelayParams, NoteValueParam, OversamplingParam, ParamSnapshot,
+    RoutingModeParam,
 };
 use crate::preset::{PresetManager, PresetValues};
 
@@ -715,12 +716,21 @@ fn draw_nebula_global(
     );
     logic_routing_dropdown(ui, state, setter, c, c.rect(x + 12.0, 210.0, 120.0, 25.0));
 
+    painter.text(
+        c.pos(x + 72.0, 250.0),
+        Align2::CENTER_CENTER,
+        "OVERSAMPLING",
+        c.font(9.0),
+        TEXT_SEC,
+    );
+    logic_oversampling_dropdown(ui, state, setter, c, c.rect(x + 22.0, 262.0, 100.0, 25.0));
+
     nebula_bool_button(
         ui,
         state,
         setter,
         c,
-        c.rect(x + 22.0, 260.0, 100.0, 28.0),
+        c.rect(x + 22.0, 306.0, 100.0, 28.0),
         &params.tempo_sync,
         if params.tempo_sync.value() {
             "SYNC ON"
@@ -734,7 +744,7 @@ fn draw_nebula_global(
         state,
         setter,
         c,
-        c.rect(x + 22.0, 306.0, 100.0, 28.0),
+        c.rect(x + 22.0, 346.0, 100.0, 28.0),
         &params.stereo_link,
         if params.stereo_link.value() {
             "LINKED"
@@ -744,9 +754,9 @@ fn draw_nebula_global(
         "global_link",
     );
 
-    nebula_divider(&painter, c, x + 14.0, 366.0, x + 130.0);
+    nebula_divider(&painter, c, x + 14.0, 406.0, x + 130.0);
     painter.text(
-        c.pos(x + 72.0, 390.0),
+        c.pos(x + 72.0, 430.0),
         Align2::CENTER_CENTER,
         "OUTPUT MIX",
         c.font(14.0),
@@ -759,7 +769,7 @@ fn draw_nebula_global(
         c,
         &params.output_mix_l,
         x + 36.0,
-        454.0,
+        486.0,
         22.0,
         "LEFT",
         ACCENT,
@@ -771,7 +781,7 @@ fn draw_nebula_global(
         c,
         &params.output_mix_r,
         x + 108.0,
-        454.0,
+        486.0,
         22.0,
         "RIGHT",
         ACCENT,
@@ -1945,10 +1955,15 @@ fn draw_logic_knob_visual(
         Stroke::new(4.0 * c.s, accent),
     );
     let angle = ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0);
-    let p1 = center + vec2(angle.cos() * radius * 0.28, angle.sin() * radius * 0.28);
-    let p2 = center + vec2(angle.cos() * radius * 0.76, angle.sin() * radius * 0.76);
-    painter.line_segment([p1, p2], Stroke::new(2.0 * c.s, TEXT_PRI));
-    painter.circle_filled(p2, 2.4 * c.s, accent);
+    let indicator = center + vec2(angle.cos() * radius * 0.76, angle.sin() * radius * 0.76);
+    let [r, g, b, _] = accent.to_array();
+    painter.circle_filled(
+        indicator,
+        6.0 * c.s,
+        Color32::from_rgba_premultiplied(r, g, b, 0x45),
+    );
+    painter.circle_filled(indicator, 3.4 * c.s, accent);
+    painter.circle_filled(indicator, 1.4 * c.s, Color32::WHITE);
     if center_dot {
         painter.circle_filled(center, 2.3 * c.s, TEXT_PRI);
     }
@@ -2854,6 +2869,49 @@ fn logic_routing_dropdown(
     ];
     logic_enum_popup(ui, c, popup_id, &resp, |ui| {
         for (variant, name) in modes {
+            if ui.button(name).clicked() {
+                state.params.push_undo();
+                setter.begin_set_parameter(param);
+                setter.set_parameter(param, variant);
+                setter.end_set_parameter(param);
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+    });
+    let resp = resp.on_hover_text(param.name().to_string());
+    add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
+}
+
+fn logic_oversampling_dropdown(
+    ui: &mut Ui,
+    state: &mut EditorState,
+    setter: &ParamSetter<'_>,
+    c: LogicCanvas,
+    rect: Rect,
+) {
+    let params = state.params.clone();
+    let param = &params.oversampling;
+    let resp = logic_button(
+        ui,
+        c,
+        rect,
+        &format!("{} ˅", enum_name(param.value())),
+        false,
+        "logic_oversampling",
+    );
+    let popup_id = ui.id().with("logic_oversampling_popup");
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    let rates = [
+        (OversamplingParam::Off, "Off"),
+        (OversamplingParam::TwoX, "2x"),
+        (OversamplingParam::FourX, "4x"),
+        (OversamplingParam::SixX, "6x"),
+        (OversamplingParam::EightX, "8x"),
+    ];
+    logic_enum_popup(ui, c, popup_id, &resp, |ui| {
+        for (variant, name) in rates {
             if ui.button(name).clicked() {
                 state.params.push_undo();
                 setter.begin_set_parameter(param);
@@ -5187,6 +5245,7 @@ fn take_snapshot(params: &NebulaStereoDelayParams) -> ParamSnapshot {
         crossfeed_phase_lr: params.crossfeed_phase_lr.value(),
         crossfeed_phase_rl: params.crossfeed_phase_rl.value(),
         routing: routing_to_index(params.routing.value()),
+        oversampling: oversampling_to_index(params.oversampling.value()),
         tempo_sync: params.tempo_sync.value(),
         stereo_link: params.stereo_link.value(),
         output_mix_l: params.output_mix_l.value(),
@@ -5230,6 +5289,11 @@ fn apply_snapshot(
             setter.set_parameter($param, routing_from_index($idx))
         };
     }
+    macro_rules! set_oversampling {
+        ($param:expr, $idx:expr) => {
+            setter.set_parameter($param, oversampling_from_index($idx))
+        };
+    }
 
     set_input!(&params.input_mode_l, snap.input_mode_l);
     set_input!(&params.input_mode_r, snap.input_mode_r);
@@ -5260,6 +5324,7 @@ fn apply_snapshot(
     set_b!(&params.crossfeed_phase_lr, snap.crossfeed_phase_lr);
     set_b!(&params.crossfeed_phase_rl, snap.crossfeed_phase_rl);
     set_routing!(&params.routing, snap.routing);
+    set_oversampling!(&params.oversampling, snap.oversampling);
     set_b!(&params.tempo_sync, snap.tempo_sync);
     set_b!(&params.stereo_link, snap.stereo_link);
     set_f!(&params.output_mix_l, snap.output_mix_l);
@@ -5301,6 +5366,7 @@ fn preset_values_from_snapshot(snap: &ParamSnapshot) -> PresetValues {
         crossfeed_phase_lr: snap.crossfeed_phase_lr,
         crossfeed_phase_rl: snap.crossfeed_phase_rl,
         routing: snap.routing as u8,
+        oversampling: snap.oversampling as u8,
         tempo_sync: snap.tempo_sync,
         stereo_link: snap.stereo_link,
         output_mix_l: snap.output_mix_l,
@@ -5402,6 +5468,27 @@ fn routing_to_index(val: RoutingModeParam) -> usize {
         RoutingModeParam::PingPong => 5,
         RoutingModeParam::Pan => 6,
         RoutingModeParam::Rotate => 7,
+    }
+}
+
+fn oversampling_from_index(idx: usize) -> OversamplingParam {
+    match idx {
+        0 => OversamplingParam::Off,
+        1 => OversamplingParam::TwoX,
+        2 => OversamplingParam::FourX,
+        3 => OversamplingParam::SixX,
+        4 => OversamplingParam::EightX,
+        _ => OversamplingParam::Off,
+    }
+}
+
+fn oversampling_to_index(val: OversamplingParam) -> usize {
+    match val {
+        OversamplingParam::Off => 0,
+        OversamplingParam::TwoX => 1,
+        OversamplingParam::FourX => 2,
+        OversamplingParam::SixX => 3,
+        OversamplingParam::EightX => 4,
     }
 }
 

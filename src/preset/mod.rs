@@ -45,7 +45,7 @@ use nih_plug::params::enums::Enum;
 use serde::{Deserialize, Serialize};
 
 use crate::parameters::{
-    InputModeParam, NebulaStereoDelayParams, NoteValueParam, RoutingModeParam,
+    InputModeParam, NebulaStereoDelayParams, NoteValueParam, OversamplingParam, RoutingModeParam,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -106,6 +106,11 @@ pub struct PresetData {
 /// | `routing`     | 5     | Ping Pong            |
 /// | `routing`     | 6     | Pan L/R              |
 /// | `routing`     | 7     | Rotate L/R           |
+/// | `oversampling`| 0     | Off                  |
+/// | `oversampling`| 1     | 2x                   |
+/// | `oversampling`| 2     | 4x                   |
+/// | `oversampling`| 3     | 6x                   |
+/// | `oversampling`| 4     | 8x                   |
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PresetValues {
     // ── Per-Channel: Input Mode ────────────────────────────────────────
@@ -160,6 +165,8 @@ pub struct PresetValues {
 
     // ── Global ─────────────────────────────────────────────────────────
     pub routing: u8,
+    #[serde(default)]
+    pub oversampling: u8,
     pub tempo_sync: bool,
     pub stereo_link: bool,
     pub output_mix_l: f32,
@@ -197,7 +204,8 @@ impl Default for PresetValues {
             crossfeed_rl: 0.0,
             crossfeed_phase_lr: false,
             crossfeed_phase_rl: false,
-            routing: 0, // Customized
+            routing: 0,      // Customized
+            oversampling: 0, // Off
             tempo_sync: false,
             stereo_link: false,
             output_mix_l: 1.0,
@@ -389,6 +397,10 @@ impl PresetManager {
             &params.routing,
             RoutingModeParam::from_index(v.routing as usize),
         );
+        setter.set_parameter(
+            &params.oversampling,
+            OversamplingParam::from_index(v.oversampling as usize),
+        );
         setter.set_parameter(&params.tempo_sync, v.tempo_sync);
         setter.set_parameter(&params.stereo_link, v.stereo_link);
         setter.set_parameter(&params.output_mix_l, v.output_mix_l);
@@ -515,7 +527,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.0,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 0, // Customized
+                routing: 0,      // Customized
+                oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 1.0,
@@ -560,7 +573,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.0,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 1, // Straight
+                routing: 1,      // Straight
+                oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 0.7, // Wet level below unity for subtle effect
@@ -606,7 +620,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.3,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 0, // Customized (crossfeed via manual amounts)
+                routing: 0,      // Customized (crossfeed via manual amounts)
+                oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: false,
                 output_mix_l: 0.85,
@@ -652,7 +667,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.0,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 5, // Ping Pong
+                routing: 5,      // Ping Pong
+                oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: true,
                 output_mix_l: 0.8,
@@ -698,7 +714,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.0,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 7, // Rotate
+                routing: 7,      // Rotate
+                oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: true,
                 output_mix_l: 0.75,
@@ -744,7 +761,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.15,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 0, // Customized
+                routing: 0,      // Customized
+                oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 0.6, // Mix below unity — augment, don't replace
@@ -792,7 +810,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.1,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 0, // Customized
+                routing: 0,      // Customized
+                oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: false,
                 output_mix_l: 0.75,
@@ -839,7 +858,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.4,
                 crossfeed_phase_lr: true, // Inverted phase enhances stereo width
                 crossfeed_phase_rl: true,
-                routing: 0, // Customized
+                routing: 0,      // Customized
+                oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
                 output_mix_l: 0.65,
@@ -887,6 +907,7 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
                 routing: 3,       // 90/10 — mostly self-feedback with hint of cross
+                oversampling: 0,  // Off
                 tempo_sync: true, // Essential for rhythmic use
                 stereo_link: false,
                 output_mix_l: 0.7,
@@ -933,7 +954,8 @@ fn build_factory_presets() -> Vec<PresetData> {
                 crossfeed_rl: 0.0,
                 crossfeed_phase_lr: false,
                 crossfeed_phase_rl: false,
-                routing: 3, // 90/10 — mostly straight with subtle cross
+                routing: 3,      // 90/10 — mostly straight with subtle cross
+                oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: false,
                 output_mix_l: 0.75,
@@ -1283,6 +1305,10 @@ mod tests {
         assert_eq!(deserialized.author, original.author);
         assert_eq!(deserialized.version, original.version);
         assert_eq!(deserialized.values.routing, original.values.routing);
+        assert_eq!(
+            deserialized.values.oversampling,
+            original.values.oversampling
+        );
         assert!((deserialized.values.feedback_l - original.values.feedback_l).abs() < f32::EPSILON);
     }
 

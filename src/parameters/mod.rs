@@ -12,7 +12,7 @@
 //! | Per-Channel (L/R)   | Input mode, delay time, note, deviation, halve/double,  |
 //! |                     | low/high cut, feedback, feedback phase                   |
 //! | Crossfeed           | L→R amount/phase, R→L amount/phase                     |
-//! | Global / Output     | Routing, tempo sync, stereo link, output mix            |
+//! | Global / Output     | Routing, oversampling, tempo sync, stereo link, output mix |
 //! | Internal State      | FX bypass, A/B snapshots, undo/redo, MIDI learn         |
 //!
 //! # Stable IDs
@@ -207,6 +207,44 @@ impl From<RoutingModeParam> for dsp::RoutingMode {
     }
 }
 
+/// Oversampling quality for the DSP engine.
+///
+/// `Off` runs the delay engine at the host sample rate. The other values run
+/// the engine at a multiple of the host rate and downsample the result back to
+/// the host buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum OversamplingParam {
+    #[id = "off"]
+    #[name = "Off"]
+    Off,
+    #[id = "2x"]
+    #[name = "2x"]
+    TwoX,
+    #[id = "4x"]
+    #[name = "4x"]
+    FourX,
+    #[id = "6x"]
+    #[name = "6x"]
+    SixX,
+    #[id = "8x"]
+    #[name = "8x"]
+    EightX,
+}
+
+impl OversamplingParam {
+    /// Convert the enum into the DSP sample-rate multiplier.
+    #[inline]
+    pub const fn factor(self) -> usize {
+        match self {
+            OversamplingParam::Off => 1,
+            OversamplingParam::TwoX => 2,
+            OversamplingParam::FourX => 4,
+            OversamplingParam::SixX => 6,
+            OversamplingParam::EightX => 8,
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Internal-State Types (serialised via `#[persist]`)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -255,6 +293,8 @@ pub struct ParamSnapshot {
 
     // ── Global / Output ──────────────────────────────────────────────
     pub routing: usize,
+    #[serde(default)]
+    pub oversampling: usize,
     pub tempo_sync: bool,
     pub stereo_link: bool,
     pub output_mix_l: f32,
@@ -310,7 +350,8 @@ impl ParamSnapshot {
             crossfeed_rl: 0.0,
             crossfeed_phase_lr: false,
             crossfeed_phase_rl: false,
-            routing: 0, // Customized
+            routing: 0,      // Customized
+            oversampling: 0, // Off
             tempo_sync: false,
             stereo_link: false,
             output_mix_l: 1.0,
@@ -634,6 +675,11 @@ pub struct NebulaStereoDelayParams {
     /// Active routing mode. Default: Customized.
     #[id = "rout"]
     pub routing: EnumParam<RoutingModeParam>,
+
+    // ── Global: Oversampling ─────────────────────────────────────────────
+    /// Internal DSP oversampling. Default: Off.
+    #[id = "osmp"]
+    pub oversampling: EnumParam<OversamplingParam>,
 
     // ── Global: Tempo Sync ───────────────────────────────────────────────
     /// When enabled, delay time is derived from the host tempo and the
@@ -1048,6 +1094,11 @@ impl Default for NebulaStereoDelayParams {
             routing: EnumParam::new("Routing", RoutingModeParam::Customized),
 
             // ══════════════════════════════════════════════════════════
+            // Global: Oversampling
+            // ══════════════════════════════════════════════════════════
+            oversampling: EnumParam::new("Oversampling", OversamplingParam::Off),
+
+            // ══════════════════════════════════════════════════════════
             // Global: Tempo Sync
             // ══════════════════════════════════════════════════════════
             tempo_sync: BoolParam::new("Tempo Sync", false)
@@ -1157,6 +1208,7 @@ impl NebulaStereoDelayParams {
             crossfeed_phase_lr: self.crossfeed_phase_lr.value(),
             crossfeed_phase_rl: self.crossfeed_phase_rl.value(),
             routing: self.routing.value().to_index(),
+            oversampling: self.oversampling.value().to_index(),
             tempo_sync: self.tempo_sync.value(),
             stereo_link: self.stereo_link.value(),
             output_mix_l: self.output_mix_l.value(),
@@ -1231,6 +1283,10 @@ impl NebulaStereoDelayParams {
         setter.set_parameter(
             &self.routing,
             RoutingModeParam::from_index(snapshot.routing),
+        );
+        setter.set_parameter(
+            &self.oversampling,
+            OversamplingParam::from_index(snapshot.oversampling),
         );
     }
 
@@ -1436,6 +1492,14 @@ mod tests {
         }
     }
 
+    #[test]
+    fn oversampling_param_round_trip() {
+        for i in 0..5 {
+            let param = OversamplingParam::from_index(i);
+            assert_eq!(param.to_index(), i);
+        }
+    }
+
     // ── Enum → DSP conversion ──────────────────────────────────────
 
     #[test]
@@ -1594,6 +1658,7 @@ mod tests {
         assert_eq!(snap.delay_time_l, 0.5);
         assert_eq!(snap.feedback_l, 0.4);
         assert_eq!(snap.output_mix_l, 1.0);
+        assert_eq!(snap.oversampling, 0);
         assert!(!snap.tempo_sync);
         assert!(!snap.stereo_link);
     }
