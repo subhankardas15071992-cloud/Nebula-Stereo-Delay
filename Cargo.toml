@@ -26,7 +26,6 @@ plugin = [
     "dep:rustc-hash",
     "dep:serde",
     "dep:serde_json",
-    "dep:clap-wrapper",
 ]
 gui = [
     "dep:nih_plug_egui",
@@ -44,9 +43,6 @@ serde_json = { version = "1", optional = true }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", optional = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-clap-wrapper = { version = "0.3.0", default-features = false, features = ["auv2", "parallel"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62.2", optional = true, features = [

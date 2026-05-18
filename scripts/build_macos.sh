@@ -1,7 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
 # Build script for macOS — Universal Binary (arm64 + x86_64)
-# Produces: CLAP, VST3, AUv2
+# Produces: CLAP, VST3
 # Requirements: Xcode Command Line Tools, Git, Rust with arm64 and x86_64 targets
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -62,7 +62,6 @@ step "Checking required tools..."
 check_tool rustup
 check_tool cargo
 check_tool clang
-check_tool clang++
 check_tool git
 check_tool lipo
 check_tool plutil
@@ -89,6 +88,7 @@ success "x86_64 build complete"
 # ── Step 5: Create universal binary with lipo ─────────────────────────────
 step "Creating universal binary..."
 mkdir -p "${BUILD_DIR}"
+rm -rf "${BUILD_DIR}/${PLUGIN_NAME}.component" "${BUILD_DIR}/${PACKAGE_NAME}-macos-auv2.zip"
 
 LIB_ARM64="${PROJECT_ROOT}/target/${TARGET_ARM64}/release/lib${LIB_CRATE_NAME}.dylib"
 LIB_X86="${PROJECT_ROOT}/target/${TARGET_X86}/release/lib${LIB_CRATE_NAME}.dylib"
@@ -186,102 +186,20 @@ echo "BNDL????" > "${VST3_BUNDLE}/Contents/PkgInfo"
 
 success "VST3 bundle created: ${VST3_BUNDLE}"
 
-# ── Step 8: Create AUv2 component with clap-wrapper-rs ────────────────────
-step "Creating AUv2 component through clap-wrapper-rs..."
-
-AUV2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
-AUV2_BUNDLE_VERSION="1.0.1"
-AUV2_VERSION=65537
-
-rm -rf "${AUV2_BUNDLE}"
-mkdir -p "${AUV2_BUNDLE}/Contents/MacOS"
-
-cp "${UNIVERSAL_LIB}" "${AUV2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
-
-cat > "${AUV2_BUNDLE}/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>AudioComponents</key>
-    <array>
-        <dict>
-            <key>description</key>
-            <string>Professional stereo delay audio effect</string>
-            <key>factoryFunction</key>
-            <string>GetPluginFactoryAUV2_0</string>
-            <key>manufacturer</key>
-            <string>NbAu</string>
-            <key>name</key>
-            <string>${VENDOR}: ${PLUGIN_NAME}</string>
-            <key>resourceUsage</key>
-            <dict>
-                <key>temporary-exception.files.all.read-write</key>
-                <true/>
-            </dict>
-            <key>subtype</key>
-            <string>NsDl</string>
-            <key>type</key>
-            <string>aufx</string>
-            <key>version</key>
-            <integer>${AUV2_VERSION}</integer>
-        </dict>
-    </array>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>English</string>
-    <key>CFBundleExecutable</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleDisplayName</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}.auv2</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundlePackageType</key>
-    <string>BNDL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${AUV2_BUNDLE_VERSION}</string>
-    <key>CFBundleSupportedPlatforms</key>
-    <array>
-        <string>MacOSX</string>
-    </array>
-    <key>CFBundleVersion</key>
-    <string>${AUV2_BUNDLE_VERSION}</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>10.13</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSPrincipalClass</key>
-    <string></string>
-</dict>
-</plist>
-EOF
-echo "BNDL????" > "${AUV2_BUNDLE}/Contents/PkgInfo"
-
-if [[ ! -d "${AUV2_BUNDLE}" ]]; then
-    die "AUv2 component was not created at ${AUV2_BUNDLE}"
-fi
-
-success "AUv2 component created: ${AUV2_BUNDLE}"
-
-# ── Step 9: Ad-hoc sign bundles ───────────────────────────────────────────
+# ── Step 8: Ad-hoc sign bundles ───────────────────────────────────────────
 step "Ad-hoc signing macOS bundles..."
 
-for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AUV2_BUNDLE}"; do
+for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}"; do
     codesign --force --deep --sign - --timestamp=none "${bundle}" >/dev/null
     success "Signed ${bundle##*/}"
 done
 
-# ── Step 10: Validate bundles ─────────────────────────────────────────────
+# ── Step 9: Validate bundles ──────────────────────────────────────────────
 step "Validating build artifacts..."
 
 VALID=1
 
-for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AUV2_BUNDLE}"; do
+for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}"; do
     bundle_type="${bundle##*.}"
     bundle_label="$(printf '%s' "${bundle_type}" | tr '[:lower:]' '[:upper:]')"
     executable_path="${bundle}/Contents/MacOS/${PLUGIN_NAME}"
@@ -320,67 +238,7 @@ for bundle in "${CLAP_BUNDLE}" "${VST3_BUNDLE}" "${AUV2_BUNDLE}"; do
     fi
 done
 
-run_auv2_validation() {
-    if ! command -v auval >/dev/null; then
-        warn "auval not found; skipping AUv2 host validation"
-        return 0
-    fi
-
-    local component_dir="${HOME}/Library/Audio/Plug-Ins/Components"
-    local install_bundle="${component_dir}/${PLUGIN_NAME}.component"
-    local backup_dir=""
-    local backup_bundle=""
-    local auval_log="${BUILD_DIR}/auval.log"
-    local status=1
-
-    mkdir -p "${component_dir}"
-
-    if [[ -e "${install_bundle}" ]]; then
-        backup_dir="$(mktemp -d)"
-        backup_bundle="${backup_dir}/${PLUGIN_NAME}.component"
-        mv "${install_bundle}" "${backup_bundle}"
-    fi
-
-    if cp -R "${AUV2_BUNDLE}" "${install_bundle}"; then
-        for attempt in {1..10}; do
-            killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
-            sleep 3
-            auval -a >/dev/null 2>&1 || true
-
-            if auval -v aufx NsDl NbAu >"${auval_log}" 2>&1; then
-                status=0
-                break
-            fi
-        done
-
-        if [[ "${status}" -ne 0 && -f "${auval_log}" ]]; then
-            cat "${auval_log}"
-        fi
-    fi
-
-    rm -rf "${install_bundle}"
-
-    if [[ -n "${backup_bundle}" && -e "${backup_bundle}" ]]; then
-        mv "${backup_bundle}" "${install_bundle}"
-        rm -rf "${backup_dir}"
-    fi
-
-    killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
-    return "${status}"
-}
-
-if [[ "${RUN_AUVAL:-0}" == "1" ]]; then
-    if run_auv2_validation; then
-        success "AUv2 component: auval validation passed"
-    else
-        error "AUv2 component: auval validation failed"
-        VALID=0
-    fi
-else
-    warn "Skipping AUv2 auval validation; set RUN_AUVAL=1 to install temporarily and validate"
-fi
-
-# ── Step 11: Print summary ───────────────────────────────────────────────
+# ── Step 10: Print summary ────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════════════════${NC}"
 echo -e "${BOLD}  Build Summary — macOS Universal Binary${NC}"
@@ -396,7 +254,6 @@ echo -e "  Output directory: ${BOLD}${BUILD_DIR}${NC}"
 echo -e ""
 echo -e "  ${GREEN}CLAP${NC}  →  ${CLAP_BUNDLE}"
 echo -e "  ${GREEN}VST3${NC}  →  ${VST3_BUNDLE}"
-echo -e "  ${GREEN}AUv2${NC}  →  ${AUV2_BUNDLE}"
 echo -e ""
 
 if [[ "${VALID}" -eq 1 ]]; then
@@ -409,7 +266,6 @@ echo -e ""
 echo -e "${BOLD}  Install locations:${NC}"
 echo -e "    CLAP:  ~/Library/Audio/Plug-Ins/CLAP/"
 echo -e "    VST3:  ~/Library/Audio/Plug-Ins/VST3/"
-echo -e "    AUv2:  ~/Library/Audio/Plug-Ins/Components/"
 echo -e ""
 
 # Copy to install locations if --install flag is given
@@ -417,14 +273,11 @@ if [[ "${1:-}" == "--install" ]]; then
     step "Installing plugins to user Library..."
     mkdir -p ~/Library/Audio/Plug-Ins/CLAP
     mkdir -p ~/Library/Audio/Plug-Ins/VST3
-    mkdir -p ~/Library/Audio/Plug-Ins/Components
 
     cp -R "${CLAP_BUNDLE}" ~/Library/Audio/Plug-Ins/CLAP/
     success "CLAP installed"
     cp -R "${VST3_BUNDLE}" ~/Library/Audio/Plug-Ins/VST3/
     success "VST3 installed"
-    cp -R "${AUV2_BUNDLE}" ~/Library/Audio/Plug-Ins/Components/
-    success "AUv2 installed"
 fi
 
 if [[ "${VALID}" -eq 1 ]]; then
