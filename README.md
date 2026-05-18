@@ -26,6 +26,12 @@ Most delay plugins process audio in 32-bit floating point. That's fine — until
 This isn't a gimmick. It's engineering.
 
 ---
+**Screenshot - macOS and Linux variant that uses EGUI**
+<img width="1003" height="698" alt="image" src="https://github.com/user-attachments/assets/255e4607-68d9-4906-8186-27c91fa00091" />
+---
+**Screenshot - Windows variant that uses Direct2D**
+<img width="1010" height="671" alt="image" src="https://github.com/user-attachments/assets/29352956-fcc1-4936-98d5-2d3bc50d15ba" />
+---
 
 ## Highlights
 
