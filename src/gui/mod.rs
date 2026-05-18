@@ -108,8 +108,10 @@ const WIN_H: u32 = 640;
 
 const LOGIC_W: f32 = 1000.0;
 const LOGIC_H: f32 = 640.0;
-const TOP_H: f32 = 148.0;
-const FOOT_H: f32 = 34.0;
+const HEADER_H: f32 = 76.0;
+const TOOLBAR_Y: f32 = 84.0;
+const TOP_H: f32 = 116.0;
+const FOOT_H: f32 = 0.0;
 const LEFT_W: f32 = 342.0;
 const RIGHT_W: f32 = 342.0;
 const METER_W: f32 = 60.0;
@@ -411,48 +413,35 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
     painter.rect_filled(c.rect, 0.0, BG);
     draw_nebula_grid(&painter, c);
 
+    painter.rect_filled(c.rect(0.0, 0.0, LOGIC_W, HEADER_H), 0.0, PANEL_BG);
     painter.rect_filled(
-        c.rect(0.0, 0.0, LOGIC_W, 32.0),
-        0.0,
-        Color32::from_rgb(0x16, 0x16, 0x19),
-    );
-    painter.text(
-        c.pos(LOGIC_W * 0.5, 16.0),
-        Align2::CENTER_CENTER,
-        "Nebula Stereo Delay",
-        c.font(13.0),
-        TEXT_PRI,
-    );
-
-    painter.rect_filled(c.rect(0.0, 32.0, LOGIC_W, 76.0), 0.0, PANEL_BG);
-    painter.rect_filled(
-        c.rect(18.0, 52.0, 20.0, 20.0),
+        c.rect(18.0, 20.0, 20.0, 20.0),
         corner_radius(4.0 * c.s),
         ACCENT,
     );
     painter.text(
-        c.pos(28.0, 62.0),
+        c.pos(28.0, 30.0),
         Align2::CENTER_CENTER,
         "N",
         c.font(11.0),
         BG,
     );
     painter.text(
-        c.pos(48.0, 58.0),
+        c.pos(48.0, 26.0),
         Align2::LEFT_CENTER,
         "Nebula Stereo Delay",
         c.font(18.0),
         TEXT_PRI,
     );
     painter.text(
-        c.pos(48.0, 80.0),
+        c.pos(48.0, 48.0),
         Align2::LEFT_CENTER,
         "Stereo Delay Processor  |  Native UI  |  64-bit",
         c.font(11.0),
         TEXT_SEC,
     );
     painter.text(
-        c.pos(LOGIC_W - 18.0, 66.0),
+        c.pos(LOGIC_W - 18.0, 34.0),
         Align2::RIGHT_CENTER,
         "v1.0",
         c.font(11.0),
@@ -503,26 +492,13 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
     draw_nebula_global(ui, state, setter, c);
     draw_nebula_level_meter(ui, state, setter, c, OUTPUT_METER_X, false);
 
-    painter.rect_filled(
-        c.rect(0.0, LOGIC_H - FOOT_H, LOGIC_W, FOOT_H),
-        0.0,
-        Color32::from_rgb(0x18, 0x18, 0x1A),
-    );
-    painter.text(
-        c.pos(LOGIC_W * 0.5, LOGIC_H - 15.0),
-        Align2::CENTER_CENTER,
-        "Nebula Stereo Delay",
-        c.font(20.0),
-        TEXT_PRI,
-    );
-
     if state.preset_menu_open {
         draw_preset_panel(
             ui,
             state,
             setter,
             c,
-            c.rect(8.0, 116.0, 88.0, 26.0).left_bottom() + vec2(0.0, 6.0 * c.s),
+            c.rect(8.0, TOOLBAR_Y, 88.0, 26.0).left_bottom() + vec2(0.0, 6.0 * c.s),
         );
     }
 }
@@ -534,11 +510,11 @@ fn draw_nebula_grid(painter: &Painter, c: LogicCanvas) {
     );
     let mut x = 0.0;
     while x <= LOGIC_W {
-        painter.line_segment([c.pos(x, 32.0), c.pos(x, LOGIC_H - FOOT_H)], line);
+        painter.line_segment([c.pos(x, 0.0), c.pos(x, LOGIC_H)], line);
         x += 32.0;
     }
-    let mut y = 32.0;
-    while y <= LOGIC_H - FOOT_H {
+    let mut y = 0.0;
+    while y <= LOGIC_H {
         painter.line_segment([c.pos(0.0, y), c.pos(LOGIC_W, y)], line);
         y += 32.0;
     }
@@ -754,7 +730,7 @@ fn draw_nebula_toolbar(
     setter: &ParamSetter<'_>,
     c: LogicCanvas,
 ) {
-    let y = 116.0;
+    let y = TOOLBAR_Y;
     logic_preset_button(ui, state, setter, c, c.rect(8.0, y, 88.0, 26.0));
     logic_ab_button(ui, state, setter, c, c.rect(102.0, y, 72.0, 26.0));
     logic_undo_button(ui, state, setter, c, c.rect(180.0, y, 64.0, 26.0));

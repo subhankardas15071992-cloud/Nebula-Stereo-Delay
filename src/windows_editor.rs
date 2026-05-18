@@ -324,7 +324,6 @@ impl NativeWindowState {
     ) {
         fill_rect(rt, layout.full, &brushes.bg);
         fill_rect(rt, layout.header, &brushes.top);
-        fill_rect(rt, layout.footer, &brushes.footer);
         card(rt, layout.left.panel, 7.0 * layout.s, brushes);
         card(rt, layout.right.panel, 7.0 * layout.s, brushes);
         card(rt, layout.global, 7.0 * layout.s, brushes);
@@ -426,14 +425,6 @@ impl NativeWindowState {
             ),
             &formats.small,
             &brushes.text_secondary,
-            Align::Center,
-        );
-        draw_text(
-            rt,
-            "Nebula Stereo Delay",
-            layout.footer,
-            &formats.title,
-            &brushes.text_light,
             Align::Center,
         );
     }
@@ -2886,7 +2877,6 @@ enum TextInput {
 struct Layout {
     full: UiRect,
     header: UiRect,
-    footer: UiRect,
     input_meter: UiRect,
     output_meter: UiRect,
     left: ChannelLayout,
@@ -2903,9 +2893,8 @@ impl Layout {
         let s = (w / BASE_W).min(h / BASE_H).clamp(0.48, 3.0);
         let full = UiRect::new(0.0, 0.0, w, h);
         let header = UiRect::new(0.0, 0.0, w, 90.0 * s);
-        let footer = UiRect::new(0.0, h - 34.0 * s, w, 34.0 * s);
         let y = header.bottom() + 8.0 * s;
-        let content_h = (footer.y - y - 8.0 * s).max(420.0 * s);
+        let content_h = (h - y - 8.0 * s).max(420.0 * s);
         let input_meter = UiRect::new(8.0 * s, y, 60.0 * s, content_h);
         let output_meter = UiRect::new(w - 68.0 * s, y, 60.0 * s, content_h);
         let x0 = input_meter.right() + 8.0 * s;
@@ -2924,7 +2913,6 @@ impl Layout {
         Self {
             full,
             header,
-            footer,
             input_meter,
             output_meter,
             left,
@@ -3230,7 +3218,6 @@ fn create_text_format(
 struct Brushes {
     bg: ID2D1SolidColorBrush,
     top: ID2D1SolidColorBrush,
-    footer: ID2D1SolidColorBrush,
     panel: ID2D1SolidColorBrush,
     card: ID2D1SolidColorBrush,
     control: ID2D1SolidColorBrush,
@@ -3254,7 +3241,6 @@ impl Brushes {
         Some(Self {
             bg: solid(rt, Colors::BG)?,
             top: solid(rt, Colors::TOP)?,
-            footer: solid(rt, Colors::FOOTER)?,
             panel: solid(rt, Colors::PANEL)?,
             card: solid(rt, Colors::CARD)?,
             control: solid(rt, Colors::CONTROL)?,
@@ -3280,7 +3266,6 @@ struct Colors;
 impl Colors {
     const BG: D2D1_COLOR_F = color(4, 2, 14, 255);
     const TOP: D2D1_COLOR_F = color(9, 6, 20, 255);
-    const FOOTER: D2D1_COLOR_F = color(20, 18, 27, 255);
     const PANEL: D2D1_COLOR_F = color(11, 7, 30, 255);
     const CARD: D2D1_COLOR_F = color(15, 9, 38, 255);
     const CONTROL: D2D1_COLOR_F = color(19, 12, 46, 255);

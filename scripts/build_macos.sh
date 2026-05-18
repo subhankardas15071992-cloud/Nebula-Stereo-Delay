@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # Build script for macOS — Universal Binary (arm64 + x86_64)
 # Produces: CLAP, VST3, AUv2
-# Requirements: Xcode Command Line Tools, CMake, Git, Rust with arm64 and x86_64 targets
+# Requirements: Xcode Command Line Tools, Git, Rust with arm64 and x86_64 targets
 # ═══════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -62,7 +62,7 @@ step "Checking required tools..."
 check_tool rustup
 check_tool cargo
 check_tool clang
-check_tool cmake
+check_tool clang++
 check_tool git
 check_tool lipo
 check_tool plutil
@@ -186,29 +186,71 @@ echo "BNDL????" > "${VST3_BUNDLE}/Contents/PkgInfo"
 
 success "VST3 bundle created: ${VST3_BUNDLE}"
 
-# ── Step 8: Create AUv2 component with clap-wrapper ───────────────────────
-step "Creating AUv2 component through clap-wrapper..."
+# ── Step 8: Create AUv2 component with clap-wrapper-rs ────────────────────
+step "Creating AUv2 component through clap-wrapper-rs..."
 
-AUV2_BUILD_DIR="${BUILD_DIR}/auv2-cmake"
 AUV2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
+AUV2_VERSION=65536
 
-rm -rf "${AUV2_BUILD_DIR}" "${AUV2_BUNDLE}"
+rm -rf "${AUV2_BUNDLE}"
+mkdir -p "${AUV2_BUNDLE}/Contents/MacOS"
 
-cmake -S "${PROJECT_ROOT}/cmake/auv2-wrapper" \
-    -B "${AUV2_BUILD_DIR}" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-    -DNEBULA_PLUGIN_NAME="${PLUGIN_NAME}" \
-    -DNEBULA_PLUGIN_VERSION="${VERSION}" \
-    -DNEBULA_CLAP_BUNDLE_PATH="${CLAP_BUNDLE}" \
-    -DNEBULA_AUV2_OUTPUT_DIR="${BUILD_DIR}" \
-    -DNEBULA_AUV2_BUNDLE_IDENTIFIER="${BUNDLE_ID}.auv2" \
-    -DNEBULA_AUV2_MANUFACTURER_NAME="${VENDOR}" \
-    -DNEBULA_AUV2_MANUFACTURER_CODE="NbAu" \
-    -DNEBULA_AUV2_SUBTYPE_CODE="NsDl"
+cp "${UNIVERSAL_LIB}" "${AUV2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
 
-cmake --build "${AUV2_BUILD_DIR}" --config Release --target nebula_stereo_delay_auv2 --parallel
+cat > "${AUV2_BUNDLE}/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>AudioComponents</key>
+    <array>
+        <dict>
+            <key>description</key>
+            <string>Professional stereo delay audio effect</string>
+            <key>factoryFunction</key>
+            <string>GetPluginFactoryAUV2_0</string>
+            <key>manufacturer</key>
+            <string>NbAu</string>
+            <key>name</key>
+            <string>${VENDOR}: ${PLUGIN_NAME}</string>
+            <key>sandboxSafe</key>
+            <true/>
+            <key>subtype</key>
+            <string>NsDl</string>
+            <key>type</key>
+            <string>aufx</string>
+            <key>version</key>
+            <integer>${AUV2_VERSION}</integer>
+        </dict>
+    </array>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>${PLUGIN_NAME}</string>
+    <key>CFBundleIdentifier</key>
+    <string>${BUNDLE_ID}.auv2</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>${PLUGIN_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+EOF
+echo "BNDL????" > "${AUV2_BUNDLE}/Contents/PkgInfo"
 
 if [[ ! -d "${AUV2_BUNDLE}" ]]; then
     die "AUv2 component was not created at ${AUV2_BUNDLE}"
@@ -278,7 +320,7 @@ run_auv2_validation() {
     local install_bundle="${component_dir}/${PLUGIN_NAME}.component"
     local backup_dir=""
     local backup_bundle=""
-    local auval_log="${AUV2_BUILD_DIR}/auval.log"
+    local auval_log="${BUILD_DIR}/auval.log"
     local status=1
 
     mkdir -p "${component_dir}"

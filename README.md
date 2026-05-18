@@ -81,7 +81,7 @@ Built with egui on macOS and Linux and native Direct2D on Windows. The window st
 | Windows (x86_64) | No | Yes | No |
 | Linux (x86_64) | Yes | Yes | No |
 
-macOS AUv2 is shipped as a CLAP-wrapped compatibility component using `free-audio/clap-wrapper`. Windows CLAP is intentionally disabled because nih-plug CLAP builds have known Windows compatibility issues. The supported targets are CLAP/VST3/AUv2 on macOS, CLAP/VST3 on Linux, and VST3-only on Windows.
+macOS AUv2 is shipped through the Rust-native `blepfx/clap-wrapper-rs` AU bridge, so the wrapped component exports AUv2 entry points from the same Rust plugin binary. Windows CLAP is intentionally disabled because nih-plug CLAP builds have known Windows compatibility issues. The supported targets are CLAP/VST3/AUv2 on macOS, CLAP/VST3 on Linux, and VST3-only on Windows.
 
 ---
 
@@ -161,7 +161,7 @@ Input ──► Input Mode Selection ──► ───────────
 
 ### Prerequisites
 
-- **Rust** 1.77.0+ (`rustup`)
+- **Rust** 1.85.0+ (`rustup`)
 - **macOS**: Xcode Command Line Tools only (`xcode-select --install`)
 - **Linux**: `libxcb-shape0-dev`, `libxcb-xfixes0-dev`, `libx11-dev`, `libgl-dev`, `libasound2-dev`
 - **Windows**: Visual Studio Build Tools with C++ workload
