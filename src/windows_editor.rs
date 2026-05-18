@@ -63,6 +63,7 @@ use crate::state::MeterValues;
 
 const BASE_W: f32 = 1000.0;
 const BASE_H: f32 = 640.0;
+const DISPLAY_VERSION: &str = "v1.0";
 const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 8801;
 const TIMER_MS: u32 = 33;
@@ -359,7 +360,7 @@ impl NativeWindowState {
         );
         draw_text(
             rt,
-            concat!("v", env!("CARGO_PKG_VERSION")),
+            DISPLAY_VERSION,
             UiRect::new(
                 896.0 * layout.s,
                 16.0 * layout.s,
@@ -499,13 +500,7 @@ impl NativeWindowState {
             rect.w - 16.0 * s,
             22.0 * s,
         );
-        draw_value_box(
-            rt,
-            top,
-            &format!("{:.1} dB", level_db.clamp(-100.0, 24.0)),
-            brushes,
-            formats,
-        );
+        draw_value_box(rt, top, &format_meter_db(level_db), brushes, formats);
 
         let rail_l = UiRect::new(
             rect.x + 17.0 * s,
@@ -611,22 +606,38 @@ impl NativeWindowState {
             self.enum_value_label(input),
             s,
         );
+        let tempo_sync = self.params.tempo_sync.value();
         draw_text(
             rt,
             "Note",
             panel.note_label,
             &formats.small,
-            &brushes.text_secondary,
+            if tempo_sync {
+                &brushes.text_secondary
+            } else {
+                &brushes.divider
+            },
             Align::Center,
         );
-        self.draw_dropdown(
-            rt,
-            brushes,
-            formats,
-            panel.note,
-            self.enum_value_label(note),
-            s,
-        );
+        if tempo_sync {
+            self.draw_dropdown(
+                rt,
+                brushes,
+                formats,
+                panel.note,
+                self.enum_value_label(note),
+                s,
+            );
+        } else {
+            draw_value_box_state(
+                rt,
+                panel.note,
+                self.enum_value_label(note),
+                false,
+                brushes,
+                formats,
+            );
+        }
 
         draw_text(
             rt,
@@ -651,12 +662,12 @@ impl NativeWindowState {
         } else {
             self.params.deviation_r.value()
         };
-        let delay_norm = if self.params.tempo_sync.value() {
+        let delay_norm = if tempo_sync {
             sync_knob_normalized(note_param, dev_param)
         } else {
             self.float_display_norm(delay_control)
         };
-        if self.params.tempo_sync.value() {
+        if tempo_sync {
             draw_note_ring(
                 rt,
                 panel.delay_cx,
@@ -676,7 +687,7 @@ impl NativeWindowState {
             brushes,
             s,
         );
-        let delay_value = if self.params.tempo_sync.value() {
+        let delay_value = if tempo_sync {
             format!("{:.0} ms", synced_delay_ms(note_param, dev_param))
         } else {
             format_float(self.float_param(delay_control))
@@ -718,7 +729,11 @@ impl NativeWindowState {
             "Deviation",
             panel.deviation_label,
             &formats.small,
-            &brushes.text_secondary,
+            if tempo_sync {
+                &brushes.text_secondary
+            } else {
+                &brushes.divider
+            },
             Align::Center,
         );
         let dev = if ch == Channel::Left {
@@ -726,10 +741,11 @@ impl NativeWindowState {
         } else {
             FloatControl::DeviationR
         };
-        draw_value_box(
+        draw_value_box_state(
             rt,
             panel.deviation,
             &format_float(self.float_param(dev)),
+            tempo_sync,
             brushes,
             formats,
         );
@@ -1056,14 +1072,7 @@ impl NativeWindowState {
             &brushes.text_primary,
             Align::Leading,
         );
-        draw_text(
-            rt,
-            "v",
-            UiRect::new(rect.right() - 18.0 * s, rect.y, 12.0 * s, rect.h),
-            &formats.small,
-            &brushes.accent,
-            Align::Center,
-        );
+        draw_dropdown_arrow(rt, rect, &brushes.accent, s);
     }
 
     fn draw_popups(
@@ -1632,8 +1641,9 @@ impl NativeWindowState {
             layout.output_meter,
             Action::Float(FloatControl::OutputLevel),
         ));
-        channel_zones(&mut zones, &layout.left, Channel::Left);
-        channel_zones(&mut zones, &layout.right, Channel::Right);
+        let tempo_sync = self.params.tempo_sync.value();
+        channel_zones(&mut zones, &layout.left, Channel::Left, tempo_sync);
+        channel_zones(&mut zones, &layout.right, Channel::Right, tempo_sync);
         let g = &layout.global_controls;
         zones.push(HitZone::new(
             g.routing,
@@ -3477,13 +3487,30 @@ fn draw_note_ring(
     brushes: &Brushes,
     s: f32,
 ) {
-    let labels = ["1/64", "1/32", "1/16", "1/8", "1/4", "1/2", "1/1"];
-    for (idx, _) in labels.iter().enumerate() {
-        let t = idx as f32 / (labels.len() - 1) as f32;
+    let variants = note_variants();
+    let denom = (variants.len() - 1) as f32;
+    for (idx, (_, label)) in variants.iter().enumerate() {
+        let t = idx as f32 / denom.max(1.0);
         let angle = ARC_START + ARC_SWEEP * t;
-        let x = cx + radius * angle.cos();
-        let y = cy + radius * angle.sin();
-        fill_circle(rt, x, y, 1.8 * s, &brushes.text_secondary);
+        let outer_x = cx + (radius + 4.0 * s) * angle.cos();
+        let outer_y = cy + (radius + 4.0 * s) * angle.sin();
+        if label.ends_with('.') {
+            fill_circle(rt, outer_x, outer_y, 2.2 * s, &brushes.orange);
+        } else if label.ends_with('T') {
+            fill_circle(rt, outer_x, outer_y, 2.2 * s, &brushes.purple);
+        } else {
+            let inner_x = cx + (radius - 3.0 * s) * angle.cos();
+            let inner_y = cy + (radius - 3.0 * s) * angle.sin();
+            draw_line(
+                rt,
+                inner_x,
+                inner_y,
+                outer_x,
+                outer_y,
+                &brushes.accent,
+                1.6 * s,
+            );
+        }
     }
 }
 
@@ -3528,16 +3555,64 @@ fn draw_value_box(
     brushes: &Brushes,
     formats: &TextFormats,
 ) {
-    fill_round(rt, rect, 4.0, &brushes.bg);
-    stroke_round(rt, rect, 4.0, &brushes.border, 1.0);
+    draw_value_box_state(rt, rect, label, true, brushes, formats);
+}
+
+fn draw_value_box_state(
+    rt: &ID2D1HwndRenderTarget,
+    rect: UiRect,
+    label: &str,
+    enabled: bool,
+    brushes: &Brushes,
+    formats: &TextFormats,
+) {
+    fill_round(
+        rt,
+        rect,
+        4.0,
+        if enabled {
+            &brushes.bg
+        } else {
+            &brushes.control
+        },
+    );
+    stroke_round(
+        rt,
+        rect,
+        4.0,
+        if enabled {
+            &brushes.border
+        } else {
+            &brushes.divider
+        },
+        1.0,
+    );
     draw_text(
         rt,
         label,
         rect,
         &formats.small,
-        &brushes.text_primary,
+        if enabled {
+            &brushes.text_primary
+        } else {
+            &brushes.text_secondary
+        },
         Align::Center,
     );
+}
+
+fn draw_dropdown_arrow(
+    rt: &ID2D1HwndRenderTarget,
+    rect: UiRect,
+    brush: &ID2D1SolidColorBrush,
+    s: f32,
+) {
+    let cx = rect.right() - 11.0 * s;
+    let cy = rect.center_y() + 1.0 * s;
+    let w = 4.2 * s;
+    let h = 3.4 * s;
+    draw_line(rt, cx - w, cy - h * 0.5, cx, cy + h * 0.5, brush, 1.4 * s);
+    draw_line(rt, cx, cy + h * 0.5, cx + w, cy - h * 0.5, brush, 1.4 * s);
 }
 
 enum Align {
@@ -3577,7 +3652,7 @@ fn draw_text(
     }
 }
 
-fn channel_zones(zones: &mut Vec<HitZone>, layout: &ChannelLayout, ch: Channel) {
+fn channel_zones(zones: &mut Vec<HitZone>, layout: &ChannelLayout, ch: Channel, tempo_sync: bool) {
     let (delay, dev, input, note, feedback, cross, fb_phase, cf_phase, halve, double) = match ch {
         Channel::Left => (
             FloatControl::DelayTimeL,
@@ -3605,7 +3680,12 @@ fn channel_zones(zones: &mut Vec<HitZone>, layout: &ChannelLayout, ch: Channel) 
         ),
     };
     zones.push(HitZone::new(layout.input, Action::Dropdown(input)));
-    zones.push(HitZone::new(layout.note, Action::Dropdown(note)));
+    if tempo_sync {
+        zones.push(HitZone::new(layout.note, Action::Dropdown(note)));
+        zones.push(HitZone::new(layout.deviation, Action::FloatField(dev)));
+    }
+    zones.push(HitZone::new(layout.halve, halve));
+    zones.push(HitZone::new(layout.double, double));
     zones.push(HitZone::new(
         knob_rect(
             layout.delay_cx,
@@ -3614,9 +3694,6 @@ fn channel_zones(zones: &mut Vec<HitZone>, layout: &ChannelLayout, ch: Channel) 
         ),
         Action::Float(delay),
     ));
-    zones.push(HitZone::new(layout.halve, halve));
-    zones.push(HitZone::new(layout.double, double));
-    zones.push(HitZone::new(layout.deviation, Action::FloatField(dev)));
 
     let filters = match ch {
         Channel::Left => [
@@ -3746,6 +3823,14 @@ fn format_float(param: &FloatParam) -> String {
     param.normalized_value_to_string(param.modulated_normalized_value(), true)
 }
 
+fn format_meter_db(db: f32) -> String {
+    if db <= -119.0 {
+        "-inf dB".to_string()
+    } else {
+        format!("{:+.1} dB", db.clamp(-100.0, 24.0))
+    }
+}
+
 fn dropdown_items(control: EnumControl) -> Vec<(usize, &'static str)> {
     match control {
         EnumControl::InputL | EnumControl::InputR => vec![
@@ -3816,48 +3901,17 @@ fn input_mode_from_index(idx: usize) -> InputModeParam {
 }
 
 fn note_from_index(idx: usize) -> NoteValueParam {
-    match idx {
-        0 => NoteValueParam::Whole,
-        1 => NoteValueParam::Half,
-        2 => NoteValueParam::HalfTriplet,
-        3 => NoteValueParam::Quarter,
-        4 => NoteValueParam::QuarterTriplet,
-        5 => NoteValueParam::Eighth,
-        6 => NoteValueParam::EighthTriplet,
-        7 => NoteValueParam::Sixteenth,
-        8 => NoteValueParam::SixteenthTriplet,
-        9 => NoteValueParam::ThirtySecond,
-        10 => NoteValueParam::ThirtySecondTriplet,
-        11 => NoteValueParam::SixtyFourth,
-        12 => NoteValueParam::HalfDotted,
-        13 => NoteValueParam::QuarterDotted,
-        14 => NoteValueParam::EighthDotted,
-        15 => NoteValueParam::SixteenthDotted,
-        16 => NoteValueParam::ThirtySecondDotted,
-        _ => NoteValueParam::Quarter,
-    }
+    note_variants()
+        .get(idx)
+        .map(|(variant, _)| *variant)
+        .unwrap_or(NoteValueParam::Quarter)
 }
 
 fn note_to_index(val: NoteValueParam) -> usize {
-    match val {
-        NoteValueParam::Whole => 0,
-        NoteValueParam::Half => 1,
-        NoteValueParam::HalfTriplet => 2,
-        NoteValueParam::Quarter => 3,
-        NoteValueParam::QuarterTriplet => 4,
-        NoteValueParam::Eighth => 5,
-        NoteValueParam::EighthTriplet => 6,
-        NoteValueParam::Sixteenth => 7,
-        NoteValueParam::SixteenthTriplet => 8,
-        NoteValueParam::ThirtySecond => 9,
-        NoteValueParam::ThirtySecondTriplet => 10,
-        NoteValueParam::SixtyFourth => 11,
-        NoteValueParam::HalfDotted => 12,
-        NoteValueParam::QuarterDotted => 13,
-        NoteValueParam::EighthDotted => 14,
-        NoteValueParam::SixteenthDotted => 15,
-        NoteValueParam::ThirtySecondDotted => 16,
-    }
+    note_variants()
+        .iter()
+        .position(|(variant, _)| *variant == val)
+        .unwrap_or(0)
 }
 
 fn routing_from_index(idx: usize) -> RoutingModeParam {
@@ -3906,23 +3960,23 @@ fn oversampling_from_index(idx: usize) -> OversamplingParam {
 
 fn note_variants() -> [(NoteValueParam, &'static str); 17] {
     [
-        (NoteValueParam::Whole, "1/1"),
-        (NoteValueParam::Half, "1/2"),
-        (NoteValueParam::HalfTriplet, "1/2T"),
-        (NoteValueParam::Quarter, "1/4"),
-        (NoteValueParam::QuarterTriplet, "1/4T"),
-        (NoteValueParam::Eighth, "1/8"),
-        (NoteValueParam::EighthTriplet, "1/8T"),
-        (NoteValueParam::Sixteenth, "1/16"),
-        (NoteValueParam::SixteenthTriplet, "1/16T"),
-        (NoteValueParam::ThirtySecond, "1/32"),
-        (NoteValueParam::ThirtySecondTriplet, "1/32T"),
         (NoteValueParam::SixtyFourth, "1/64"),
-        (NoteValueParam::HalfDotted, "1/2."),
-        (NoteValueParam::QuarterDotted, "1/4."),
-        (NoteValueParam::EighthDotted, "1/8."),
-        (NoteValueParam::SixteenthDotted, "1/16."),
+        (NoteValueParam::ThirtySecondTriplet, "1/32T"),
+        (NoteValueParam::ThirtySecond, "1/32"),
+        (NoteValueParam::SixteenthTriplet, "1/16T"),
+        (NoteValueParam::Sixteenth, "1/16"),
         (NoteValueParam::ThirtySecondDotted, "1/32."),
+        (NoteValueParam::EighthTriplet, "1/8T"),
+        (NoteValueParam::Eighth, "1/8"),
+        (NoteValueParam::SixteenthDotted, "1/16."),
+        (NoteValueParam::QuarterTriplet, "1/4T"),
+        (NoteValueParam::EighthDotted, "1/8."),
+        (NoteValueParam::Quarter, "1/4"),
+        (NoteValueParam::HalfTriplet, "1/2T"),
+        (NoteValueParam::QuarterDotted, "1/4."),
+        (NoteValueParam::Half, "1/2"),
+        (NoteValueParam::HalfDotted, "1/2."),
+        (NoteValueParam::Whole, "1/1"),
     ]
 }
 
