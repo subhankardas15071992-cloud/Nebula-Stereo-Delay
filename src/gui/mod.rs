@@ -350,6 +350,30 @@ fn stop_midi_learn(state: &mut EditorState) {
     }
 }
 
+fn midi_learn_waiting_for_control(state: &EditorState) -> bool {
+    state.midi_learn_active
+}
+
+fn midi_learn_waiting_for_cc(state: &EditorState) -> bool {
+    state.midi_runtime.is_learning()
+        || state
+            .params
+            .midi_learn
+            .read()
+            .map(|ml| ml.is_learning())
+            .unwrap_or(false)
+}
+
+fn midi_learn_button_label(state: &EditorState, idle_label: &'static str) -> (&'static str, bool) {
+    if midi_learn_waiting_for_control(state) {
+        ("Pick Control", true)
+    } else if midi_learn_waiting_for_cc(state) {
+        ("Move CC", true)
+    } else {
+        (idle_label, false)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct LogicCanvas {
     rect: Rect,
@@ -3087,22 +3111,8 @@ fn logic_redo_button(
 }
 
 fn logic_midi_button(ui: &mut Ui, state: &mut EditorState, c: LogicCanvas, rect: Rect) {
-    let learning = state.midi_learn_active
-        || state.midi_runtime.is_learning()
-        || state
-            .params
-            .midi_learn
-            .read()
-            .map(|ml| ml.is_learning())
-            .unwrap_or(false);
-    let resp = logic_button(
-        ui,
-        c,
-        rect,
-        if learning { "MIDI..." } else { "MIDI" },
-        learning,
-        "logic_midi",
-    );
+    let (label, learning) = midi_learn_button_label(state, "MIDI");
+    let resp = logic_button(ui, c, rect, label, learning, "logic_midi");
     if resp.clicked() {
         if learning {
             stop_midi_learn(state);
@@ -4300,21 +4310,13 @@ fn draw_redo_btn(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>,
 }
 
 fn draw_midi_learn_btn(ui: &mut Ui, state: &mut EditorState, s: f32) {
-    let learning = state.midi_learn_active
-        || state.midi_runtime.is_learning()
-        || state
-            .params
-            .midi_learn
-            .read()
-            .map(|ml| ml.is_learning())
-            .unwrap_or(false);
+    let (label, learning) = midi_learn_button_label(state, "MIDI Learn");
     let global_on = state
         .params
         .midi_learn
         .read()
         .map(|ml| ml.is_global_enabled())
         .unwrap_or(true);
-    let label = if learning { "LEARN..." } else { "MIDI" };
 
     let resp = ui.add(
         Button::new(rich(label, 11.0 * s).color(if global_on { TEXT_PRI } else { TEXT_SEC }))

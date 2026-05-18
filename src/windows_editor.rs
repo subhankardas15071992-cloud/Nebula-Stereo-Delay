@@ -26,7 +26,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_WEIGHT_DEMI_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-    DWRITE_TEXT_ALIGNMENT_TRAILING,
+    DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{
@@ -444,23 +444,18 @@ impl NativeWindowState {
         formats: &TextFormats,
         layout: &Layout,
     ) {
-        let in_level = self
-            .meters
-            .get_input_l()
-            .max(self.meters.get_input_r())
-            .max(0.000_001);
-        let out_level = self
-            .meters
-            .get_output_l()
-            .max(self.meters.get_output_r())
-            .max(0.000_001);
+        let input_l = self.meters.get_input_l().max(0.000_001);
+        let input_r = self.meters.get_input_r().max(0.000_001);
+        let output_l = self.meters.get_output_l().max(0.000_001);
+        let output_r = self.meters.get_output_r().max(0.000_001);
         self.draw_meter(
             rt,
             brushes,
             formats,
             layout.input_meter,
             "Input",
-            in_level,
+            input_l,
+            input_r,
             FloatControl::InputLevel,
             layout.s,
         );
@@ -470,7 +465,8 @@ impl NativeWindowState {
             formats,
             layout.output_meter,
             "Output",
-            out_level,
+            output_l,
+            output_r,
             FloatControl::OutputLevel,
             layout.s,
         );
@@ -483,7 +479,8 @@ impl NativeWindowState {
         formats: &TextFormats,
         rect: UiRect,
         title: &str,
-        linear_level: f32,
+        level_l: f32,
+        level_r: f32,
         trim: FloatControl,
         s: f32,
     ) {
@@ -495,7 +492,7 @@ impl NativeWindowState {
             &brushes.accent,
             Align::Center,
         );
-        let level_db = 20.0 * linear_level.log10();
+        let level_db = 20.0 * level_l.max(level_r).log10();
         let top = UiRect::new(
             rect.x + 8.0 * s,
             rect.y + 33.0 * s,
@@ -510,34 +507,27 @@ impl NativeWindowState {
             formats,
         );
 
-        let rail = UiRect::new(
-            rect.center_x() - 10.0 * s,
+        let rail_l = UiRect::new(
+            rect.x + 17.0 * s,
             rect.y + 74.0 * s,
-            20.0 * s,
+            9.0 * s,
             rect.h - 150.0 * s,
         );
-        fill_round(rt, rail, 5.0 * s, &brushes.control);
-        stroke_round(rt, rail, 5.0 * s, &brushes.border, 1.0 * s);
-        let level_norm = ((level_db + 80.0) / 100.0).clamp(0.0, 1.0);
-        let meter_h = rail.h * level_norm;
-        fill_round(
-            rt,
-            UiRect::new(
-                rail.x + 4.0 * s,
-                rail.bottom() - meter_h,
-                rail.w - 8.0 * s,
-                meter_h,
-            ),
-            3.0 * s,
-            &brushes.green,
+        let rail_r = UiRect::new(
+            rect.x + 34.0 * s,
+            rect.y + 74.0 * s,
+            9.0 * s,
+            rect.h - 150.0 * s,
         );
+        draw_meter_track(rt, rail_l, level_l, brushes, s);
+        draw_meter_track(rt, rail_r, level_r, brushes, s);
         for i in 0..=5 {
-            let y = rail.y + rail.h * i as f32 / 5.0;
+            let y = rail_l.y + rail_l.h * i as f32 / 5.0;
             draw_line(
                 rt,
-                rail.right() + 5.0 * s,
+                rail_r.right() + 5.0 * s,
                 y,
-                rail.right() + 12.0 * s,
+                rail_r.right() + 12.0 * s,
                 y,
                 &brushes.divider,
                 1.0,
@@ -545,13 +535,14 @@ impl NativeWindowState {
         }
 
         let trim_norm = self.float_param(trim).modulated_normalized_value();
-        let handle_y = rail.bottom() - rail.h * trim_norm;
+        let slider = meter_rail(rect, s);
+        let handle_y = slider.bottom() - slider.h * trim_norm;
         fill_round(
             rt,
             UiRect::new(
-                rect.x + 17.0 * s,
+                rect.x + 12.0 * s,
                 handle_y - 4.0 * s,
-                rect.w - 34.0 * s,
+                rect.w - 24.0 * s,
                 8.0 * s,
             ),
             2.5 * s,
@@ -996,7 +987,7 @@ impl NativeWindowState {
             rt,
             g.mix_l_cx,
             g.mix_cy,
-            32.0 * s,
+            24.0 * s,
             self.float_display_norm(mix_l),
             &brushes.green,
             brushes,
@@ -1005,9 +996,9 @@ impl NativeWindowState {
         draw_value_box(
             rt,
             UiRect::new(
-                g.mix_l_cx - 43.0 * s,
-                g.mix_cy + 39.0 * s,
-                86.0 * s,
+                g.mix_l_cx - 29.0 * s,
+                g.mix_cy + 32.0 * s,
+                58.0 * s,
                 18.0 * s,
             ),
             &format_float(self.float_param(mix_l)),
@@ -1026,7 +1017,7 @@ impl NativeWindowState {
             rt,
             g.mix_r_cx,
             g.mix_cy,
-            32.0 * s,
+            24.0 * s,
             self.float_display_norm(mix_r),
             &brushes.green,
             brushes,
@@ -1035,9 +1026,9 @@ impl NativeWindowState {
         draw_value_box(
             rt,
             UiRect::new(
-                g.mix_r_cx - 43.0 * s,
-                g.mix_cy + 39.0 * s,
-                86.0 * s,
+                g.mix_r_cx - 29.0 * s,
+                g.mix_cy + 32.0 * s,
+                58.0 * s,
                 18.0 * s,
             ),
             &format_float(self.float_param(mix_r)),
@@ -1655,27 +1646,27 @@ impl NativeWindowState {
         zones.push(HitZone::new(g.sync, Action::Bool(BoolControl::TempoSync)));
         zones.push(HitZone::new(g.link, Action::Bool(BoolControl::StereoLink)));
         zones.push(HitZone::new(
-            knob_rect(g.mix_l_cx, g.mix_cy, 43.0 * layout.s),
+            knob_rect(g.mix_l_cx, g.mix_cy, 32.0 * layout.s),
             Action::Float(FloatControl::OutputMixL),
         ));
         zones.push(HitZone::new(
-            knob_rect(g.mix_r_cx, g.mix_cy, 43.0 * layout.s),
+            knob_rect(g.mix_r_cx, g.mix_cy, 32.0 * layout.s),
             Action::Float(FloatControl::OutputMixR),
         ));
         zones.push(HitZone::new(
             UiRect::new(
-                g.mix_l_cx - 43.0 * layout.s,
-                g.mix_cy + 39.0 * layout.s,
-                86.0 * layout.s,
+                g.mix_l_cx - 29.0 * layout.s,
+                g.mix_cy + 32.0 * layout.s,
+                58.0 * layout.s,
                 18.0 * layout.s,
             ),
             Action::FloatField(FloatControl::OutputMixL),
         ));
         zones.push(HitZone::new(
             UiRect::new(
-                g.mix_r_cx - 43.0 * layout.s,
-                g.mix_cy + 39.0 * layout.s,
-                86.0 * layout.s,
+                g.mix_r_cx - 29.0 * layout.s,
+                g.mix_cy + 32.0 * layout.s,
+                58.0 * layout.s,
                 18.0 * layout.s,
             ),
             Action::FloatField(FloatControl::OutputMixR),
@@ -1746,7 +1737,11 @@ impl NativeWindowState {
             1.0 - ((y - rail.y) / rail.h).clamp(0.0, 1.0)
         } else {
             let delta = (drag.start_y - y) / (150.0 * layout.s).max(1.0);
-            drag.start_norm + delta
+            if drag.control.is_lpf_cut() {
+                drag.start_norm - delta
+            } else {
+                drag.start_norm + delta
+            }
         }
         .clamp(0.0, 1.0);
 
@@ -1832,11 +1827,7 @@ impl NativeWindowState {
         display_norm: f32,
         setter: &ParamSetter<'_>,
     ) {
-        let actual_norm = if control.is_lpf_cut() {
-            1.0 - display_norm.clamp(0.0, 1.0)
-        } else {
-            display_norm.clamp(0.0, 1.0)
-        };
+        let actual_norm = display_norm.clamp(0.0, 1.0);
         let param = self.float_param(control);
         let old_norm = param.modulated_normalized_value();
         let old_plain = param.value();
@@ -1942,15 +1933,7 @@ impl NativeWindowState {
                 Some(norm) => {
                     self.params.push_undo();
                     self.begin_float_gesture(input.control, setter);
-                    self.set_float_display_norm(
-                        input.control,
-                        if input.control.is_lpf_cut() {
-                            1.0 - norm
-                        } else {
-                            norm
-                        },
-                        setter,
-                    );
+                    self.set_float_display_norm(input.control, norm, setter);
                     self.end_float_gesture(input.control, setter);
                     self.status = format!("Set {}", param.name());
                 }
@@ -2464,12 +2447,7 @@ impl NativeWindowState {
     }
 
     fn float_display_norm(&self, control: FloatControl) -> f32 {
-        let norm = self.float_param(control).modulated_normalized_value();
-        if control.is_lpf_cut() {
-            1.0 - norm
-        } else {
-            norm
-        }
+        self.float_param(control).modulated_normalized_value()
     }
 
     fn linked_float(&self, control: FloatControl) -> Option<FloatControl> {
@@ -2659,6 +2637,38 @@ impl NativeWindowState {
             learn.save_for_rollback();
         }
     }
+}
+
+fn draw_meter_track(
+    rt: &ID2D1HwndRenderTarget,
+    rail: UiRect,
+    linear_level: f32,
+    brushes: &Brushes,
+    s: f32,
+) {
+    fill_round(rt, rail, 3.0 * s, &brushes.control);
+    stroke_round(rt, rail, 3.0 * s, &brushes.border, 1.0 * s);
+    let level_db = 20.0 * linear_level.max(0.000_001).log10();
+    let level_norm = ((level_db.clamp(-60.0, 12.0) + 60.0) / 72.0).clamp(0.0, 1.0);
+    if level_norm > 0.0 {
+        let meter_h = rail.h * level_norm;
+        fill_round(
+            rt,
+            UiRect::new(rail.x, rail.bottom() - meter_h, rail.w, meter_h),
+            3.0 * s,
+            &brushes.green,
+        );
+    }
+    let zero_y = rail.bottom() - rail.h * ((0.0_f32 + 60.0) / 72.0);
+    draw_line(
+        rt,
+        rail.x - 2.0 * s,
+        zero_y,
+        rail.right() + 2.0 * s,
+        zero_y,
+        &brushes.text_secondary,
+        1.0 * s,
+    );
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2880,7 +2890,7 @@ struct Layout {
 
 impl Layout {
     fn new(w: f32, h: f32) -> Self {
-        let s = (w / BASE_W).min(h / BASE_H).clamp(0.72, 3.0);
+        let s = (w / BASE_W).min(h / BASE_H).clamp(0.48, 3.0);
         let full = UiRect::new(0.0, 0.0, w, h);
         let header = UiRect::new(0.0, 0.0, w, 90.0 * s);
         let footer = UiRect::new(0.0, h - 34.0 * s, w, 34.0 * s);
@@ -2891,8 +2901,8 @@ impl Layout {
         let x0 = input_meter.right() + 8.0 * s;
         let x3 = output_meter.x - 8.0 * s;
         let gap = 8.0 * s;
-        let channel_w = 292.0 * s;
-        let global_w = (x3 - x0 - channel_w * 2.0 - gap * 2.0).max(210.0 * s);
+        let channel_w = 342.0 * s;
+        let global_w = (x3 - x0 - channel_w * 2.0 - gap * 2.0).max(144.0 * s);
         let left_rect = UiRect::new(x0, y, channel_w, content_h);
         let right_rect = UiRect::new(x0 + channel_w + gap, y, channel_w, content_h);
         let global = UiRect::new(right_rect.right() + gap, y, global_w, content_h);
@@ -2950,39 +2960,35 @@ struct ChannelLayout {
 impl ChannelLayout {
     fn new(panel: UiRect, s: f32) -> Self {
         let cx = panel.center_x();
-        let delay_cx = cx - 18.0 * s;
-        let delay_cy = panel.y + 115.0 * s;
-        let delay_r = 38.0 * s;
+        let delay_cx = cx;
+        let delay_cy = panel.y + 147.0 * s;
+        let delay_r = 36.0 * s;
         let button_w = 30.0 * s;
         let button_h = 19.0 * s;
         let br = delay_r + 20.0 * s;
         let halve_x = delay_cx + ARC_START.cos() * br;
         let double_x = delay_cx + (ARC_START + ARC_SWEEP).cos() * br;
         let button_y = delay_cy + ARC_START.sin() * br;
-        let filter_y = panel.y + 265.0 * s;
-        let f0 = panel.x + 44.0 * s;
-        let fw = 67.0 * s;
-        let feedback_cx = panel.x + 82.0 * s;
-        let crossfeed_cx = panel.right() - 82.0 * s;
-        let row_y = panel.y + 390.0 * s;
+        let filter_y = panel.y + 288.0 * s;
+        let f0 = panel.x + 48.0 * s;
+        let fw = 82.0 * s;
+        let feedback_cx = panel.x + 88.0 * s;
+        let crossfeed_cx = panel.right() - 88.0 * s;
+        let row_y = panel.y + 402.0 * s;
+        let side_box_x = delay_cx + 64.0 * s;
         Self {
             panel,
-            title: UiRect::new(panel.x, panel.y + 12.0 * s, panel.w, 24.0 * s),
+            title: UiRect::new(panel.x, panel.y + 13.0 * s, panel.w, 24.0 * s),
             input_label: UiRect::new(panel.x + 16.0 * s, panel.y + 48.0 * s, 80.0 * s, 14.0 * s),
             input: UiRect::new(panel.x + 16.0 * s, panel.y + 64.0 * s, 88.0 * s, 24.0 * s),
-            note_label: UiRect::new(
-                panel.right() - 105.0 * s,
-                panel.y + 48.0 * s,
-                90.0 * s,
-                14.0 * s,
+            note_label: UiRect::new(side_box_x, delay_cy - 45.0 * s, 82.0 * s, 14.0 * s),
+            note: UiRect::new(side_box_x, delay_cy - 31.0 * s, 82.0 * s, 24.0 * s),
+            delay_label: UiRect::new(
+                delay_cx - 56.0 * s,
+                delay_cy - 64.0 * s,
+                112.0 * s,
+                15.0 * s,
             ),
-            note: UiRect::new(
-                panel.right() - 105.0 * s,
-                panel.y + 64.0 * s,
-                90.0 * s,
-                24.0 * s,
-            ),
-            delay_label: UiRect::new(delay_cx - 56.0 * s, panel.y + 52.0 * s, 112.0 * s, 15.0 * s),
             delay_cx,
             delay_cy,
             delay_r,
@@ -2998,18 +3004,8 @@ impl ChannelLayout {
                 button_w,
                 button_h,
             ),
-            deviation_label: UiRect::new(
-                panel.right() - 107.0 * s,
-                panel.y + 100.0 * s,
-                92.0 * s,
-                14.0 * s,
-            ),
-            deviation: UiRect::new(
-                panel.right() - 111.0 * s,
-                panel.y + 116.0 * s,
-                98.0 * s,
-                22.0 * s,
-            ),
+            deviation_label: UiRect::new(side_box_x, delay_cy + 15.0 * s, 82.0 * s, 14.0 * s),
+            deviation: UiRect::new(side_box_x, delay_cy + 30.0 * s, 82.0 * s, 22.0 * s),
             filter_x: [f0, f0 + fw, f0 + fw * 2.0, f0 + fw * 3.0],
             filter_y,
             feedback_label: UiRect::new(
@@ -3064,7 +3060,6 @@ struct GlobalLayout {
 
 impl GlobalLayout {
     fn new(panel: UiRect, s: f32) -> Self {
-        let cx = panel.center_x();
         Self {
             title: UiRect::new(panel.x, panel.y + 12.0 * s, panel.w, 24.0 * s),
             routing_label: UiRect::new(
@@ -3104,10 +3099,20 @@ impl GlobalLayout {
                 25.0 * s,
             ),
             mix_title: UiRect::new(panel.x, panel.y + 280.0 * s, panel.w, 24.0 * s),
-            mix_l_label: UiRect::new(cx - 78.0 * s, panel.y + 320.0 * s, 58.0 * s, 14.0 * s),
-            mix_r_label: UiRect::new(cx + 20.0 * s, panel.y + 320.0 * s, 58.0 * s, 14.0 * s),
-            mix_l_cx: cx - 49.0 * s,
-            mix_r_cx: cx + 49.0 * s,
+            mix_l_label: UiRect::new(
+                panel.x + panel.w * 0.25 - 29.0 * s,
+                panel.y + 320.0 * s,
+                58.0 * s,
+                14.0 * s,
+            ),
+            mix_r_label: UiRect::new(
+                panel.x + panel.w * 0.75 - 29.0 * s,
+                panel.y + 320.0 * s,
+                58.0 * s,
+                14.0 * s,
+            ),
+            mix_l_cx: panel.x + panel.w * 0.25,
+            mix_r_cx: panel.x + panel.w * 0.75,
             mix_cy: panel.y + 370.0 * s,
         }
     }
@@ -3207,6 +3212,7 @@ fn create_text_format(
     };
     let _ = unsafe { format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING) };
     let _ = unsafe { format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER) };
+    let _ = unsafe { format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP) };
     Some(format)
 }
 
