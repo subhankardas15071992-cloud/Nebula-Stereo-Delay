@@ -59,7 +59,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   # ──────────────────────────────────────────────────────────────────────────
-  # macOS — Universal Binary (arm64 + x86_64) → CLAP, VST3
+  # macOS — Universal Binary (arm64 + x86_64) → CLAP, VST3, AUv2
   # ──────────────────────────────────────────────────────────────────────────
   build-macos:
     name: Build macOS
@@ -86,7 +86,7 @@ jobs:
             macos-cargo-${{ runner.os }}-
 
       - name: Build plugin
-        run: chmod +x scripts/build_macos.sh && ./scripts/build_macos.sh
+        run: chmod +x scripts/build_macos.sh && RUN_AUVAL=1 ./scripts/build_macos.sh
 
       - name: Zip CLAP bundle
         run: |
@@ -97,6 +97,11 @@ jobs:
         run: |
           cd build/macos
           zip -r "${{ env.PACKAGE_NAME }}-macos-vst3.zip" "${{ env.PLUGIN_NAME }}.vst3"
+
+      - name: Zip AUv2 component
+        run: |
+          cd build/macos
+          zip -r "${{ env.PACKAGE_NAME }}-macos-auv2.zip" "${{ env.PLUGIN_NAME }}.component"
 
       - name: Upload CLAP artifact
         uses: actions/upload-artifact@v4
@@ -110,6 +115,13 @@ jobs:
         with:
           name: ${{ env.PACKAGE_NAME }}-macos-vst3
           path: build/macos/${{ env.PACKAGE_NAME }}-macos-vst3.zip
+          if-no-files-found: error
+
+      - name: Upload AUv2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-macos-auv2
+          path: build/macos/${{ env.PACKAGE_NAME }}-macos-auv2.zip
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -254,6 +266,7 @@ jobs:
           files: |
             release-artifacts/${{ env.PACKAGE_NAME }}-macos-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-macos-vst3/*.zip
+            release-artifacts/${{ env.PACKAGE_NAME }}-macos-auv2/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-windows-vst3/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-linux-clap/*.zip
             release-artifacts/${{ env.PACKAGE_NAME }}-linux-vst3/*.zip

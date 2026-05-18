@@ -12,6 +12,7 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-orange.svg)](#build)
 [![Format: CLAP](https://img.shields.io/badge/format-CLAP-purple.svg)](#plugin-formats)
 [![Format: VST3](https://img.shields.io/badge/format-VST3-green.svg)](#plugin-formats)
+[![Format: AUv2](https://img.shields.io/badge/format-AUv2-silver.svg)](#plugin-formats)
 
 </div>
 
@@ -64,23 +65,23 @@ Save two complete parameter snapshots and toggle between them with one click. Ev
 ### MIDI Learn
 Click MIDI, click a control, then move a MIDI controller. The next CC maps to that control. Right-click MIDI for global MIDI on/off, mapping cleanup, rollback, and save.
 
-### Soft Bypass
-The FX bypass crossfades over 512 samples. No clicks. No pops. No hard cuts.
+### Hard Bypass
+The FX bypass fully removes the delay engine from the signal path when disabled.
 
 ### Freely Scalable GUI
-Built with egui on macOS and Linux. The window starts at 860x640 and scales as a single fixed-ratio editor surface, so host resizing does not chop controls. DPI-aware on high-resolution displays. Windows VST3 builds compile without egui and use the host editor until a native Direct2D editor is added.
+Built with egui on macOS and Linux and native Direct2D on Windows. The window starts at 860x640 and scales as a single fixed-ratio editor surface, so host resizing does not chop controls. DPI-aware on high-resolution displays.
 
 ---
 
 ## Plugin Formats
 
-| Platform | CLAP | VST3 |
-|----------|:----:|:----:|
-| macOS (Universal) | Yes | Yes |
-| Windows (x86_64) | No | Yes |
-| Linux (x86_64) | Yes | Yes |
+| Platform | CLAP | VST3 | AUv2 |
+|----------|:----:|:----:|:----:|
+| macOS (Universal) | Yes | Yes | Yes |
+| Windows (x86_64) | No | Yes | No |
+| Linux (x86_64) | Yes | Yes | No |
 
-AUv2 is intentionally not shipped. Windows CLAP is intentionally disabled because nih-plug CLAP builds have known Windows compatibility issues. The supported targets are CLAP/VST3 on macOS and Linux, and VST3-only on Windows.
+macOS AUv2 is shipped as a CLAP-wrapped compatibility component using `free-audio/clap-wrapper`. Windows CLAP is intentionally disabled because nih-plug CLAP builds have known Windows compatibility issues. The supported targets are CLAP/VST3/AUv2 on macOS, CLAP/VST3 on Linux, and VST3-only on Windows.
 
 ---
 
@@ -172,7 +173,7 @@ Input ──► Input Mode Selection ──► ───────────
 git clone https://github.com/<you>/nebula-stereo-delay.git
 cd nebula-stereo-delay
 
-# macOS (Universal: arm64 + x86_64, CLAP + VST3)
+# macOS (Universal: arm64 + x86_64, CLAP + VST3 + AUv2)
 ./scripts/build_macos.sh
 
 # Linux (x86_64, CLAP + VST3)
@@ -231,7 +232,7 @@ src/
 GitHub Actions builds on every push and PR:
 
 1. **Lint** — `cargo fmt --check` + `cargo clippy -D warnings` on Ubuntu
-2. **macOS** — Universal binary (arm64 + x86_64), CLAP + VST3
+2. **macOS** — Universal binary (arm64 + x86_64), CLAP + VST3 + AUv2
 3. **Windows** — x86_64 VST3 only
 4. **Linux** — x86_64 CLAP + VST3
 5. **Release** — Tag a `v*` release and all artifacts publish automatically
