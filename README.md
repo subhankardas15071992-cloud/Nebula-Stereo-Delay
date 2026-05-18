@@ -83,6 +83,8 @@ Built with egui on macOS and Linux and native Direct2D on Windows. The window st
 
 macOS AUv2 is shipped through the Rust-native `blepfx/clap-wrapper-rs` AU bridge, so the wrapped component exports AUv2 entry points from the same Rust plugin binary. Windows CLAP is intentionally disabled because nih-plug CLAP builds have known Windows compatibility issues. The supported targets are CLAP/VST3/AUv2 on macOS, CLAP/VST3 on Linux, and VST3-only on Windows.
 
+Logic Pro caches AUv2 components aggressively. After replacing an existing AUv2 build, use Logic Pro's Plug-in Manager → Full Audio Unit Reset, or remove `~/Library/Caches/AudioUnitCache`, then relaunch Logic Pro.
+
 ---
 
 ## 10 Factory Presets

@@ -190,7 +190,8 @@ success "VST3 bundle created: ${VST3_BUNDLE}"
 step "Creating AUv2 component through clap-wrapper-rs..."
 
 AUV2_BUNDLE="${BUILD_DIR}/${PLUGIN_NAME}.component"
-AUV2_VERSION=65536
+AUV2_BUNDLE_VERSION="1.0.1"
+AUV2_VERSION=65537
 
 rm -rf "${AUV2_BUNDLE}"
 mkdir -p "${AUV2_BUNDLE}/Contents/MacOS"
@@ -213,8 +214,11 @@ cat > "${AUV2_BUNDLE}/Contents/Info.plist" <<EOF
             <string>NbAu</string>
             <key>name</key>
             <string>${VENDOR}: ${PLUGIN_NAME}</string>
-            <key>sandboxSafe</key>
-            <true/>
+            <key>resourceUsage</key>
+            <dict>
+                <key>temporary-exception.files.all.read-write</key>
+                <true/>
+            </dict>
             <key>subtype</key>
             <string>NsDl</string>
             <key>type</key>
@@ -227,6 +231,8 @@ cat > "${AUV2_BUNDLE}/Contents/Info.plist" <<EOF
     <string>English</string>
     <key>CFBundleExecutable</key>
     <string>${PLUGIN_NAME}</string>
+    <key>CFBundleDisplayName</key>
+    <string>${PLUGIN_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}.auv2</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -235,18 +241,22 @@ cat > "${AUV2_BUNDLE}/Contents/Info.plist" <<EOF
     <string>${PLUGIN_NAME}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
     <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
+    <string>${AUV2_BUNDLE_VERSION}</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>MacOSX</string>
     </array>
     <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
+    <string>${AUV2_BUNDLE_VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.13</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSPrincipalClass</key>
+    <string></string>
 </dict>
 </plist>
 EOF
