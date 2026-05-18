@@ -672,7 +672,7 @@ impl NativeWindowState {
                 rt,
                 panel.delay_cx,
                 panel.delay_cy,
-                panel.delay_r + 12.0 * s,
+                panel.delay_r + 8.0 * s,
                 brushes,
                 s,
             );
@@ -690,18 +690,18 @@ impl NativeWindowState {
         let delay_value = if tempo_sync {
             format!("{:.0} ms", synced_delay_ms(note_param, dev_param))
         } else {
-            format_float(self.float_param(delay_control))
+            format!("{:.0} ms", self.float_param(delay_control).value() * 1000.0)
         };
         draw_text(
             rt,
             &delay_value,
             UiRect::new(
-                panel.delay_cx - 34.0 * s,
-                panel.delay_cy - 8.0 * s,
-                68.0 * s,
-                16.0 * s,
+                panel.delay_cx - 27.0 * s,
+                panel.delay_cy - 7.0 * s,
+                54.0 * s,
+                14.0 * s,
             ),
-            &formats.small,
+            &formats.tiny,
             &brushes.text_light,
             Align::Center,
         );
@@ -2975,10 +2975,9 @@ impl ChannelLayout {
         let delay_r = 36.0 * s;
         let button_w = 30.0 * s;
         let button_h = 19.0 * s;
-        let br = delay_r + 20.0 * s;
-        let halve_x = delay_cx + ARC_START.cos() * br;
-        let double_x = delay_cx + (ARC_START + ARC_SWEEP).cos() * br;
-        let button_y = delay_cy + ARC_START.sin() * br;
+        let halve_x = delay_cx - 40.0 * s;
+        let double_x = delay_cx + 40.0 * s;
+        let button_y = delay_cy + delay_r + 16.0 * s;
         let filter_y = panel.y + 288.0 * s;
         let f0 = panel.x + 48.0 * s;
         let fw = 82.0 * s;
@@ -2995,9 +2994,9 @@ impl ChannelLayout {
             note: UiRect::new(side_box_x, delay_cy - 31.0 * s, 82.0 * s, 24.0 * s),
             delay_label: UiRect::new(
                 delay_cx - 56.0 * s,
-                delay_cy - 64.0 * s,
+                delay_cy - 72.0 * s,
                 112.0 * s,
-                15.0 * s,
+                14.0 * s,
             ),
             delay_cx,
             delay_cy,
@@ -3182,6 +3181,7 @@ impl UiRect {
 
 #[derive(Clone)]
 struct TextFormats {
+    tiny: IDWriteTextFormat,
     small: IDWriteTextFormat,
     body: IDWriteTextFormat,
     title: IDWriteTextFormat,
@@ -3191,6 +3191,7 @@ impl TextFormats {
     fn new(factory: &IDWriteFactory, scale: f32) -> Option<Self> {
         let s = scale.clamp(0.7, 3.0);
         Some(Self {
+            tiny: create_text_format(factory, 9.5 * s, false)?,
             small: create_text_format(factory, 11.0 * s, false)?,
             body: create_text_format(factory, 13.0 * s, false)?,
             title: create_text_format(factory, 18.0 * s, true)?,
