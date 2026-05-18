@@ -278,6 +278,7 @@ run_auv2_validation() {
     local install_bundle="${component_dir}/${PLUGIN_NAME}.component"
     local backup_dir=""
     local backup_bundle=""
+    local auval_log="${AUV2_BUILD_DIR}/auval.log"
     local status=1
 
     mkdir -p "${component_dir}"
@@ -289,9 +290,20 @@ run_auv2_validation() {
     fi
 
     if cp -R "${AUV2_BUNDLE}" "${install_bundle}"; then
-        killall AudioComponentRegistrar >/dev/null 2>&1 || true
-        auval -a >/dev/null 2>&1 || true
-        auval -v aufx NsDl NbAu >/dev/null && status=0
+        for attempt in {1..10}; do
+            killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
+            sleep 3
+            auval -a >/dev/null 2>&1 || true
+
+            if auval -v aufx NsDl NbAu >"${auval_log}" 2>&1; then
+                status=0
+                break
+            fi
+        done
+
+        if [[ "${status}" -ne 0 && -f "${auval_log}" ]]; then
+            cat "${auval_log}"
+        fi
     fi
 
     rm -rf "${install_bundle}"
@@ -301,7 +313,7 @@ run_auv2_validation() {
         rm -rf "${backup_dir}"
     fi
 
-    killall AudioComponentRegistrar >/dev/null 2>&1 || true
+    killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
     return "${status}"
 }
 
