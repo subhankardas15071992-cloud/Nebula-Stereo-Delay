@@ -259,4 +259,4 @@ Nebula Stereo Delay is open-source software licensed under the **GNU Affero Gene
 ---
 
 **Reporting Issues:**
-For reporting any issues create an issue on the Github repository, and while creating the issue do mention your email ID in the issue. The issues of paid customers will be solved on priority basis. Free customers are expected to workout any issues on their own, no support will be provided to them.
+For reporting any issues create an issue on the Github repository, and while creating the issue do mention your email ID in the issue. The issues of paid customers will be solved on priority basis (Minimum payment of $10). Free customers are expected to workout any issues on their own, no support will be provided to them.
