@@ -1149,12 +1149,7 @@ impl NativeWindowState {
             Some(Popup::Dropdown { control, anchor }) => {
                 let items = dropdown_items(control);
                 let item_h = 23.0 * layout.s;
-                let popup = UiRect::new(
-                    anchor.x,
-                    anchor.bottom() + 3.0 * layout.s,
-                    anchor.w.max(118.0 * layout.s),
-                    item_h * items.len() as f32,
-                );
+                let popup = dropdown_popup_rect(anchor, items.len(), layout);
                 fill_round(rt, popup, 5.0 * layout.s, &brushes.card);
                 stroke_round(
                     rt,
@@ -1538,12 +1533,7 @@ impl NativeWindowState {
             Some(Popup::Dropdown { control, anchor }) => {
                 let items = dropdown_items(control);
                 let item_h = 23.0 * layout.s;
-                let popup = UiRect::new(
-                    anchor.x,
-                    anchor.bottom() + 3.0 * layout.s,
-                    anchor.w.max(118.0 * layout.s),
-                    item_h * items.len() as f32,
-                );
+                let popup = dropdown_popup_rect(anchor, items.len(), layout);
                 if !popup.contains(x, y) {
                     self.popup = None;
                     return false;
@@ -3960,6 +3950,16 @@ fn input_mode_label(value: InputModeParam) -> &'static str {
         InputModeParam::LeftPlusRight => "L+R",
         InputModeParam::LeftMinusRight => "L-R",
     }
+}
+
+fn dropdown_popup_rect(anchor: UiRect, item_count: usize, layout: &Layout) -> UiRect {
+    let item_h = 23.0 * layout.s;
+    let popup_h = item_h * item_count.max(1) as f32;
+    let margin = 6.0 * layout.s;
+    let preferred_y = anchor.bottom() + 3.0 * layout.s;
+    let max_y = layout.full.bottom() - margin - popup_h;
+    let y = preferred_y.min(max_y).max(layout.full.y + margin);
+    UiRect::new(anchor.x, y, anchor.w.max(118.0 * layout.s), popup_h)
 }
 
 fn note_label(value: NoteValueParam) -> &'static str {
