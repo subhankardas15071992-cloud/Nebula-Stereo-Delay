@@ -380,6 +380,8 @@ impl NativeWindowState {
                 Action::TopButton(TopButton::Ab) => {
                     self.params.ab_state.load(Ordering::Relaxed) == 1
                 }
+                Action::Bool(BoolControl::TempoSync) => self.params.tempo_sync.value(),
+                Action::Bool(BoolControl::StereoLink) => self.params.stereo_link.value(),
                 _ => false,
             };
             let label = match zone.action {
@@ -402,6 +404,20 @@ impl NativeWindowState {
                         "MIDI Learn"
                     }
                 }
+                Action::Bool(BoolControl::TempoSync) => {
+                    if self.params.tempo_sync.value() {
+                        "Sync On"
+                    } else {
+                        "Sync Off"
+                    }
+                }
+                Action::Bool(BoolControl::StereoLink) => {
+                    if self.params.stereo_link.value() {
+                        "Linked"
+                    } else {
+                        "Unlinked"
+                    }
+                }
                 Action::TopButton(TopButton::Bypass) => {
                     if bypass {
                         "FX Bypassed"
@@ -411,7 +427,25 @@ impl NativeWindowState {
                 }
                 _ => "",
             };
-            draw_button(rt, zone.rect, label, active, brushes, formats, layout.s);
+            match zone.action {
+                Action::Dropdown(EnumControl::Routing) => self.draw_dropdown(
+                    rt,
+                    brushes,
+                    formats,
+                    zone.rect,
+                    self.enum_value_label(EnumControl::Routing),
+                    layout.s,
+                ),
+                Action::Dropdown(EnumControl::Oversampling) => self.draw_dropdown(
+                    rt,
+                    brushes,
+                    formats,
+                    zone.rect,
+                    self.enum_value_label(EnumControl::Oversampling),
+                    layout.s,
+                ),
+                _ => draw_button(rt, zone.rect, label, active, brushes, formats, layout.s),
+            }
         }
 
         draw_text(
@@ -912,133 +946,152 @@ impl NativeWindowState {
         layout: &Layout,
     ) {
         let s = layout.s;
-        let g = &layout.global_controls;
+        let panel = layout.global;
+        let x = panel.x;
         draw_text(
             rt,
-            "Global",
-            g.title,
+            "Left Output",
+            UiRect::new(x, panel.y + 12.0 * s, panel.w, 20.0 * s),
             &formats.title,
             &brushes.accent,
             Align::Center,
-        );
-        draw_text(
-            rt,
-            "Routing",
-            g.routing_label,
-            &formats.small,
-            &brushes.text_secondary,
-            Align::Center,
-        );
-        self.draw_dropdown(
-            rt,
-            brushes,
-            formats,
-            g.routing,
-            self.enum_value_label(EnumControl::Routing),
-            s,
-        );
-        draw_text(
-            rt,
-            "Oversampling",
-            g.os_label,
-            &formats.small,
-            &brushes.text_secondary,
-            Align::Center,
-        );
-        self.draw_dropdown(
-            rt,
-            brushes,
-            formats,
-            g.oversampling,
-            self.enum_value_label(EnumControl::Oversampling),
-            s,
-        );
-        draw_button(
-            rt,
-            g.sync,
-            "Tempo Sync",
-            self.params.tempo_sync.value(),
-            brushes,
-            formats,
-            s,
-        );
-        draw_button(
-            rt,
-            g.link,
-            "Stereo Link",
-            self.params.stereo_link.value(),
-            brushes,
-            formats,
-            s,
         );
 
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::WetLevelL,
+            "Wet",
+            OutputSlot::LeftTop,
+            &brushes.accent,
+        );
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::DryLevelL,
+            "Dry",
+            OutputSlot::RightTop,
+            &brushes.green,
+        );
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::WetPanL,
+            "Wet Pan",
+            OutputSlot::LeftMiddle,
+            &brushes.orange,
+        );
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::DryPanL,
+            "Dry Pan",
+            OutputSlot::RightMiddle,
+            &brushes.purple,
+        );
+
+        draw_line(
+            rt,
+            x + 14.0 * s,
+            panel.y + 249.0 * s,
+            panel.right() - 14.0 * s,
+            panel.y + 249.0 * s,
+            &brushes.border,
+            1.0 * s,
+        );
         draw_text(
             rt,
-            "Output Mix",
-            g.mix_title,
+            "Right Output",
+            UiRect::new(x, panel.y + 274.0 * s, panel.w, 20.0 * s),
             &formats.title,
             &brushes.accent,
             Align::Center,
         );
-        let mix_l = FloatControl::OutputMixL;
-        let mix_r = FloatControl::OutputMixR;
-        draw_text(
+        self.draw_output_control(
             rt,
-            "Left",
-            g.mix_l_label,
-            &formats.small,
-            &brushes.text_secondary,
-            Align::Center,
-        );
-        draw_knob(
-            rt,
-            g.mix_l_cx,
-            g.mix_cy,
-            24.0 * s,
-            self.float_display_norm(mix_l),
-            &brushes.green,
-            brushes,
-            s,
-        );
-        draw_value_box(
-            rt,
-            UiRect::new(
-                g.mix_l_cx - 29.0 * s,
-                g.mix_cy + 32.0 * s,
-                58.0 * s,
-                18.0 * s,
-            ),
-            &format_float(self.float_param(mix_l)),
             brushes,
             formats,
+            layout,
+            FloatControl::WetLevelR,
+            "Wet",
+            OutputSlot::LeftBottom,
+            &brushes.accent,
         );
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::DryLevelR,
+            "Dry",
+            OutputSlot::RightBottom,
+            &brushes.green,
+        );
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::WetPanR,
+            "Wet Pan",
+            OutputSlot::LeftLower,
+            &brushes.orange,
+        );
+        self.draw_output_control(
+            rt,
+            brushes,
+            formats,
+            layout,
+            FloatControl::DryPanR,
+            "Dry Pan",
+            OutputSlot::RightLower,
+            &brushes.purple,
+        );
+    }
+
+    fn draw_output_control(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+        control: FloatControl,
+        label: &str,
+        slot: OutputSlot,
+        accent: &ID2D1SolidColorBrush,
+    ) {
+        let s = layout.s;
+        let (cx, cy) = output_slot_center(layout, slot);
         draw_text(
             rt,
-            "Right",
-            g.mix_r_label,
+            label,
+            UiRect::new(cx - 42.0 * s, cy - 45.0 * s, 84.0 * s, 14.0 * s),
             &formats.small,
             &brushes.text_secondary,
             Align::Center,
         );
         draw_knob(
             rt,
-            g.mix_r_cx,
-            g.mix_cy,
-            24.0 * s,
-            self.float_display_norm(mix_r),
-            &brushes.green,
+            cx,
+            cy,
+            18.0 * s,
+            self.float_display_norm(control),
+            accent,
             brushes,
             s,
         );
         draw_value_box(
             rt,
-            UiRect::new(
-                g.mix_r_cx - 29.0 * s,
-                g.mix_cy + 32.0 * s,
-                58.0 * s,
-                18.0 * s,
-            ),
-            &format_float(self.float_param(mix_r)),
+            output_value_rect(layout, slot),
+            &format_float(self.float_param(control)),
             brushes,
             formats,
         );
@@ -1635,43 +1688,17 @@ impl NativeWindowState {
         let tempo_sync = self.params.tempo_sync.value();
         channel_zones(&mut zones, &layout.left, Channel::Left, tempo_sync);
         channel_zones(&mut zones, &layout.right, Channel::Right, tempo_sync);
-        let g = &layout.global_controls;
-        zones.push(HitZone::new(
-            g.routing,
-            Action::Dropdown(EnumControl::Routing),
-        ));
-        zones.push(HitZone::new(
-            g.oversampling,
-            Action::Dropdown(EnumControl::Oversampling),
-        ));
-        zones.push(HitZone::new(g.sync, Action::Bool(BoolControl::TempoSync)));
-        zones.push(HitZone::new(g.link, Action::Bool(BoolControl::StereoLink)));
-        zones.push(HitZone::new(
-            knob_rect(g.mix_l_cx, g.mix_cy, 32.0 * layout.s),
-            Action::Float(FloatControl::OutputMixL),
-        ));
-        zones.push(HitZone::new(
-            knob_rect(g.mix_r_cx, g.mix_cy, 32.0 * layout.s),
-            Action::Float(FloatControl::OutputMixR),
-        ));
-        zones.push(HitZone::new(
-            UiRect::new(
-                g.mix_l_cx - 29.0 * layout.s,
-                g.mix_cy + 32.0 * layout.s,
-                58.0 * layout.s,
-                18.0 * layout.s,
-            ),
-            Action::FloatField(FloatControl::OutputMixL),
-        ));
-        zones.push(HitZone::new(
-            UiRect::new(
-                g.mix_r_cx - 29.0 * layout.s,
-                g.mix_cy + 32.0 * layout.s,
-                58.0 * layout.s,
-                18.0 * layout.s,
-            ),
-            Action::FloatField(FloatControl::OutputMixR),
-        ));
+        for (control, slot) in output_control_specs(layout) {
+            let (cx, cy) = output_slot_center(layout, slot);
+            zones.push(HitZone::new(
+                knob_rect(cx, cy, 27.0 * layout.s),
+                Action::Float(control),
+            ));
+            zones.push(HitZone::new(
+                output_value_rect(layout, slot),
+                Action::FloatField(control),
+            ));
+        }
         zones
     }
 
@@ -1679,24 +1706,51 @@ impl NativeWindowState {
         let s = layout.s;
         let y = 58.0 * s;
         let h = 24.0 * s;
-        let mut x = 18.0 * s;
-        let specs = [
-            (TopButton::Preset, 82.0),
-            (TopButton::Undo, 60.0),
-            (TopButton::Redo, 60.0),
-            (TopButton::Ab, 72.0),
-            (TopButton::Midi, 96.0),
-            (TopButton::Bypass, 96.0),
-        ];
-        let mut zones = Vec::new();
-        for (button, w) in specs {
-            zones.push(HitZone::new(
-                UiRect::new(x, y, w * s, h),
-                Action::TopButton(button),
-            ));
-            x += (w + 8.0) * s;
-        }
-        zones
+        [
+            (
+                UiRect::new(18.0 * s, y, 82.0 * s, h),
+                Action::TopButton(TopButton::Preset),
+            ),
+            (
+                UiRect::new(108.0 * s, y, 60.0 * s, h),
+                Action::TopButton(TopButton::Undo),
+            ),
+            (
+                UiRect::new(176.0 * s, y, 60.0 * s, h),
+                Action::TopButton(TopButton::Redo),
+            ),
+            (
+                UiRect::new(244.0 * s, y, 72.0 * s, h),
+                Action::TopButton(TopButton::Ab),
+            ),
+            (
+                UiRect::new(324.0 * s, y, 96.0 * s, h),
+                Action::TopButton(TopButton::Midi),
+            ),
+            (
+                UiRect::new(428.0 * s, y, 74.0 * s, h),
+                Action::Bool(BoolControl::TempoSync),
+            ),
+            (
+                UiRect::new(510.0 * s, y, 86.0 * s, h),
+                Action::Bool(BoolControl::StereoLink),
+            ),
+            (
+                UiRect::new(604.0 * s, y, 126.0 * s, h),
+                Action::Dropdown(EnumControl::Routing),
+            ),
+            (
+                UiRect::new(738.0 * s, y, 94.0 * s, h),
+                Action::Dropdown(EnumControl::Oversampling),
+            ),
+            (
+                UiRect::new(840.0 * s, y, 112.0 * s, h),
+                Action::TopButton(TopButton::Bypass),
+            ),
+        ]
+        .into_iter()
+        .map(|(rect, action)| HitZone::new(rect, action))
+        .collect()
     }
 
     fn dropdown_anchor(&self, control: EnumControl, layout: &Layout) -> UiRect {
@@ -1705,8 +1759,12 @@ impl NativeWindowState {
             EnumControl::InputR => layout.right.input,
             EnumControl::NoteL => layout.left.note,
             EnumControl::NoteR => layout.right.note,
-            EnumControl::Routing => layout.global_controls.routing,
-            EnumControl::Oversampling => layout.global_controls.oversampling,
+            EnumControl::Routing | EnumControl::Oversampling => self
+                .top_buttons(layout)
+                .into_iter()
+                .find(|zone| matches!(zone.action, Action::Dropdown(c) if c == control))
+                .map(|zone| zone.rect)
+                .unwrap_or(layout.global),
         }
     }
 
@@ -1895,35 +1953,31 @@ impl NativeWindowState {
     fn value_rect(&self, control: FloatControl, layout: &Layout) -> Option<UiRect> {
         value_rect_for_control(control, &layout.left, Channel::Left)
             .or_else(|| value_rect_for_control(control, &layout.right, Channel::Right))
-            .or_else(|| {
-                let g = &layout.global_controls;
-                match control {
-                    FloatControl::InputLevel => Some(UiRect::new(
-                        layout.input_meter.x + 8.0 * layout.s,
-                        layout.input_meter.bottom() - 45.0 * layout.s,
-                        layout.input_meter.w - 16.0 * layout.s,
-                        22.0 * layout.s,
-                    )),
-                    FloatControl::OutputLevel => Some(UiRect::new(
-                        layout.output_meter.x + 8.0 * layout.s,
-                        layout.output_meter.bottom() - 45.0 * layout.s,
-                        layout.output_meter.w - 16.0 * layout.s,
-                        22.0 * layout.s,
-                    )),
-                    FloatControl::OutputMixL => Some(UiRect::new(
-                        g.mix_l_cx - 43.0 * layout.s,
-                        g.mix_cy + 39.0 * layout.s,
-                        86.0 * layout.s,
-                        18.0 * layout.s,
-                    )),
-                    FloatControl::OutputMixR => Some(UiRect::new(
-                        g.mix_r_cx - 43.0 * layout.s,
-                        g.mix_cy + 39.0 * layout.s,
-                        86.0 * layout.s,
-                        18.0 * layout.s,
-                    )),
-                    _ => None,
-                }
+            .or_else(|| match control {
+                FloatControl::InputLevel => Some(UiRect::new(
+                    layout.input_meter.x + 8.0 * layout.s,
+                    layout.input_meter.bottom() - 45.0 * layout.s,
+                    layout.input_meter.w - 16.0 * layout.s,
+                    22.0 * layout.s,
+                )),
+                FloatControl::OutputLevel => Some(UiRect::new(
+                    layout.output_meter.x + 8.0 * layout.s,
+                    layout.output_meter.bottom() - 45.0 * layout.s,
+                    layout.output_meter.w - 16.0 * layout.s,
+                    22.0 * layout.s,
+                )),
+                FloatControl::WetLevelL
+                | FloatControl::DryLevelL
+                | FloatControl::WetPanL
+                | FloatControl::DryPanL
+                | FloatControl::WetLevelR
+                | FloatControl::DryLevelR
+                | FloatControl::WetPanR
+                | FloatControl::DryPanR => output_control_specs(layout)
+                    .into_iter()
+                    .find(|(c, _)| *c == control)
+                    .map(|(_, slot)| output_value_rect(layout, slot)),
+                _ => None,
             })
     }
 
@@ -2173,6 +2227,14 @@ impl NativeWindowState {
             MidiTarget::OutputMixL => set_from_normalized!(&self.params.output_mix_l),
             MidiTarget::OutputMixR => set_from_normalized!(&self.params.output_mix_r),
             MidiTarget::Oversampling => set_from_normalized!(&self.params.oversampling),
+            MidiTarget::WetLevelL => set_from_normalized!(&self.params.wet_level_l),
+            MidiTarget::WetLevelR => set_from_normalized!(&self.params.wet_level_r),
+            MidiTarget::DryLevelL => set_from_normalized!(&self.params.dry_level_l),
+            MidiTarget::DryLevelR => set_from_normalized!(&self.params.dry_level_r),
+            MidiTarget::WetPanL => set_from_normalized!(&self.params.wet_pan_l),
+            MidiTarget::WetPanR => set_from_normalized!(&self.params.wet_pan_r),
+            MidiTarget::DryPanL => set_from_normalized!(&self.params.dry_pan_l),
+            MidiTarget::DryPanR => set_from_normalized!(&self.params.dry_pan_r),
             MidiTarget::Bypass => self.params.set_bypass(normalized >= 0.5),
         }
     }
@@ -2442,8 +2504,14 @@ impl NativeWindowState {
             FloatControl::FeedbackR => &self.params.feedback_r,
             FloatControl::CrossfeedLr => &self.params.crossfeed_lr,
             FloatControl::CrossfeedRl => &self.params.crossfeed_rl,
-            FloatControl::OutputMixL => &self.params.output_mix_l,
-            FloatControl::OutputMixR => &self.params.output_mix_r,
+            FloatControl::WetLevelL => &self.params.wet_level_l,
+            FloatControl::WetLevelR => &self.params.wet_level_r,
+            FloatControl::DryLevelL => &self.params.dry_level_l,
+            FloatControl::DryLevelR => &self.params.dry_level_r,
+            FloatControl::WetPanL => &self.params.wet_pan_l,
+            FloatControl::WetPanR => &self.params.wet_pan_r,
+            FloatControl::DryPanL => &self.params.dry_pan_l,
+            FloatControl::DryPanR => &self.params.dry_pan_r,
         }
     }
 
@@ -2469,8 +2537,14 @@ impl NativeWindowState {
             FloatControl::FeedbackR => Some(FloatControl::FeedbackL),
             FloatControl::CrossfeedLr => Some(FloatControl::CrossfeedRl),
             FloatControl::CrossfeedRl => Some(FloatControl::CrossfeedLr),
-            FloatControl::OutputMixL => Some(FloatControl::OutputMixR),
-            FloatControl::OutputMixR => Some(FloatControl::OutputMixL),
+            FloatControl::WetLevelL => Some(FloatControl::WetLevelR),
+            FloatControl::WetLevelR => Some(FloatControl::WetLevelL),
+            FloatControl::DryLevelL => Some(FloatControl::DryLevelR),
+            FloatControl::DryLevelR => Some(FloatControl::DryLevelL),
+            FloatControl::WetPanL => Some(FloatControl::WetPanR),
+            FloatControl::WetPanR => Some(FloatControl::WetPanL),
+            FloatControl::DryPanL => Some(FloatControl::DryPanR),
+            FloatControl::DryPanR => Some(FloatControl::DryPanL),
             FloatControl::InputLevel | FloatControl::OutputLevel => None,
         }
     }
@@ -2707,8 +2781,14 @@ enum FloatControl {
     FeedbackR,
     CrossfeedLr,
     CrossfeedRl,
-    OutputMixL,
-    OutputMixR,
+    WetLevelL,
+    WetLevelR,
+    DryLevelL,
+    DryLevelR,
+    WetPanL,
+    WetPanR,
+    DryPanL,
+    DryPanR,
 }
 
 impl FloatControl {
@@ -2740,8 +2820,14 @@ impl FloatControl {
             Self::FeedbackR => MidiTarget::FeedbackR,
             Self::CrossfeedLr => MidiTarget::CrossfeedLr,
             Self::CrossfeedRl => MidiTarget::CrossfeedRl,
-            Self::OutputMixL => MidiTarget::OutputMixL,
-            Self::OutputMixR => MidiTarget::OutputMixR,
+            Self::WetLevelL => MidiTarget::WetLevelL,
+            Self::WetLevelR => MidiTarget::WetLevelR,
+            Self::DryLevelL => MidiTarget::DryLevelL,
+            Self::DryLevelR => MidiTarget::DryLevelR,
+            Self::WetPanL => MidiTarget::WetPanL,
+            Self::WetPanR => MidiTarget::WetPanR,
+            Self::DryPanL => MidiTarget::DryPanL,
+            Self::DryPanR => MidiTarget::DryPanR,
         }
     }
 }
@@ -2882,7 +2968,6 @@ struct Layout {
     left: ChannelLayout,
     right: ChannelLayout,
     global: UiRect,
-    global_controls: GlobalLayout,
     preset_popup: UiRect,
     midi_popup: UiRect,
     s: f32,
@@ -2907,7 +2992,6 @@ impl Layout {
         let global = UiRect::new(right_rect.right() + gap, y, global_w, content_h);
         let left = ChannelLayout::new(left_rect, s);
         let right = ChannelLayout::new(right_rect, s);
-        let global_controls = GlobalLayout::new(global, s);
         let preset_popup = UiRect::new(18.0 * s, 86.0 * s, 360.0 * s, 455.0 * s);
         let midi_popup = UiRect::new(360.0 * s, 86.0 * s, 330.0 * s, 390.0 * s);
         Self {
@@ -2918,7 +3002,6 @@ impl Layout {
             left,
             right,
             global,
-            global_controls,
             preset_popup,
             midi_popup,
             s,
@@ -3039,80 +3122,53 @@ impl ChannelLayout {
 }
 
 #[derive(Clone, Copy)]
-struct GlobalLayout {
-    title: UiRect,
-    routing_label: UiRect,
-    routing: UiRect,
-    os_label: UiRect,
-    oversampling: UiRect,
-    sync: UiRect,
-    link: UiRect,
-    mix_title: UiRect,
-    mix_l_label: UiRect,
-    mix_r_label: UiRect,
-    mix_l_cx: f32,
-    mix_r_cx: f32,
-    mix_cy: f32,
+enum OutputSlot {
+    LeftTop,
+    RightTop,
+    LeftMiddle,
+    RightMiddle,
+    LeftBottom,
+    RightBottom,
+    LeftLower,
+    RightLower,
 }
 
-impl GlobalLayout {
-    fn new(panel: UiRect, s: f32) -> Self {
-        Self {
-            title: UiRect::new(panel.x, panel.y + 12.0 * s, panel.w, 24.0 * s),
-            routing_label: UiRect::new(
-                panel.x + 20.0 * s,
-                panel.y + 58.0 * s,
-                panel.w - 40.0 * s,
-                14.0 * s,
-            ),
-            routing: UiRect::new(
-                panel.x + 28.0 * s,
-                panel.y + 76.0 * s,
-                panel.w - 56.0 * s,
-                26.0 * s,
-            ),
-            os_label: UiRect::new(
-                panel.x + 20.0 * s,
-                panel.y + 116.0 * s,
-                panel.w - 40.0 * s,
-                14.0 * s,
-            ),
-            oversampling: UiRect::new(
-                panel.x + 28.0 * s,
-                panel.y + 134.0 * s,
-                panel.w - 56.0 * s,
-                26.0 * s,
-            ),
-            sync: UiRect::new(
-                panel.x + 28.0 * s,
-                panel.y + 178.0 * s,
-                panel.w - 56.0 * s,
-                25.0 * s,
-            ),
-            link: UiRect::new(
-                panel.x + 28.0 * s,
-                panel.y + 212.0 * s,
-                panel.w - 56.0 * s,
-                25.0 * s,
-            ),
-            mix_title: UiRect::new(panel.x, panel.y + 280.0 * s, panel.w, 24.0 * s),
-            mix_l_label: UiRect::new(
-                panel.x + panel.w * 0.25 - 29.0 * s,
-                panel.y + 320.0 * s,
-                58.0 * s,
-                14.0 * s,
-            ),
-            mix_r_label: UiRect::new(
-                panel.x + panel.w * 0.75 - 29.0 * s,
-                panel.y + 320.0 * s,
-                58.0 * s,
-                14.0 * s,
-            ),
-            mix_l_cx: panel.x + panel.w * 0.25,
-            mix_r_cx: panel.x + panel.w * 0.75,
-            mix_cy: panel.y + 370.0 * s,
-        }
-    }
+fn output_slot_center(layout: &Layout, slot: OutputSlot) -> (f32, f32) {
+    let panel = layout.global;
+    let s = layout.s;
+    let left_x = panel.x + 38.0 * s;
+    let right_x = panel.right() - 38.0 * s;
+    let (x, y) = match slot {
+        OutputSlot::LeftTop => (left_x, panel.y + 90.0 * s),
+        OutputSlot::RightTop => (right_x, panel.y + 90.0 * s),
+        OutputSlot::LeftMiddle => (left_x, panel.y + 170.0 * s),
+        OutputSlot::RightMiddle => (right_x, panel.y + 170.0 * s),
+        OutputSlot::LeftBottom => (left_x, panel.y + 352.0 * s),
+        OutputSlot::RightBottom => (right_x, panel.y + 352.0 * s),
+        OutputSlot::LeftLower => (left_x, panel.y + 432.0 * s),
+        OutputSlot::RightLower => (right_x, panel.y + 432.0 * s),
+    };
+    (x, y)
+}
+
+fn output_value_rect(layout: &Layout, slot: OutputSlot) -> UiRect {
+    let s = layout.s;
+    let (cx, cy) = output_slot_center(layout, slot);
+    UiRect::new(cx - 30.0 * s, cy + 29.0 * s, 60.0 * s, 18.0 * s)
+}
+
+fn output_control_specs(layout: &Layout) -> [(FloatControl, OutputSlot); 8] {
+    let _ = layout;
+    [
+        (FloatControl::WetLevelL, OutputSlot::LeftTop),
+        (FloatControl::DryLevelL, OutputSlot::RightTop),
+        (FloatControl::WetPanL, OutputSlot::LeftMiddle),
+        (FloatControl::DryPanL, OutputSlot::RightMiddle),
+        (FloatControl::WetLevelR, OutputSlot::LeftBottom),
+        (FloatControl::DryLevelR, OutputSlot::RightBottom),
+        (FloatControl::WetPanR, OutputSlot::LeftLower),
+        (FloatControl::DryPanR, OutputSlot::RightLower),
+    ]
 }
 
 #[derive(Clone, Copy)]
@@ -4292,6 +4348,14 @@ fn apply_snapshot(
     );
     setter.set_parameter(&params.tempo_sync, snap.tempo_sync);
     setter.set_parameter(&params.stereo_link, snap.stereo_link);
+    setter.set_parameter(&params.wet_level_l, snap.wet_level_l);
+    setter.set_parameter(&params.wet_level_r, snap.wet_level_r);
+    setter.set_parameter(&params.dry_level_l, snap.dry_level_l);
+    setter.set_parameter(&params.dry_level_r, snap.dry_level_r);
+    setter.set_parameter(&params.wet_pan_l, snap.wet_pan_l);
+    setter.set_parameter(&params.wet_pan_r, snap.wet_pan_r);
+    setter.set_parameter(&params.dry_pan_l, snap.dry_pan_l);
+    setter.set_parameter(&params.dry_pan_r, snap.dry_pan_r);
     setter.set_parameter(&params.output_mix_l, snap.output_mix_l);
     setter.set_parameter(&params.output_mix_r, snap.output_mix_r);
 }
@@ -4332,8 +4396,16 @@ fn preset_values_from_snapshot(snap: &ParamSnapshot) -> PresetValues {
         oversampling: snap.oversampling as u8,
         tempo_sync: snap.tempo_sync,
         stereo_link: snap.stereo_link,
-        output_mix_l: snap.output_mix_l,
-        output_mix_r: snap.output_mix_r,
+        wet_level_l: snap.wet_level_l,
+        wet_level_r: snap.wet_level_r,
+        dry_level_l: snap.dry_level_l,
+        dry_level_r: snap.dry_level_r,
+        wet_pan_l: snap.wet_pan_l,
+        wet_pan_r: snap.wet_pan_r,
+        dry_pan_l: snap.dry_pan_l,
+        dry_pan_r: snap.dry_pan_r,
+        output_mix_l: 1.0,
+        output_mix_r: 1.0,
     }
 }
 

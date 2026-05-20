@@ -323,6 +323,14 @@ fn apply_midi_target_normalized(
         MidiTarget::OutputMixL => set_from_normalized!(&params.output_mix_l),
         MidiTarget::OutputMixR => set_from_normalized!(&params.output_mix_r),
         MidiTarget::Oversampling => set_from_normalized!(&params.oversampling),
+        MidiTarget::WetLevelL => set_from_normalized!(&params.wet_level_l),
+        MidiTarget::WetLevelR => set_from_normalized!(&params.wet_level_r),
+        MidiTarget::DryLevelL => set_from_normalized!(&params.dry_level_l),
+        MidiTarget::DryLevelR => set_from_normalized!(&params.dry_level_r),
+        MidiTarget::WetPanL => set_from_normalized!(&params.wet_pan_l),
+        MidiTarget::WetPanR => set_from_normalized!(&params.wet_pan_r),
+        MidiTarget::DryPanL => set_from_normalized!(&params.dry_pan_l),
+        MidiTarget::DryPanR => set_from_normalized!(&params.dry_pan_r),
         MidiTarget::Bypass => {
             state
                 .params
@@ -730,6 +738,8 @@ fn draw_nebula_toolbar(
     setter: &ParamSetter<'_>,
     c: LogicCanvas,
 ) {
+    sync_routing_display_to_parameters(state, setter);
+
     let y = TOOLBAR_Y;
     logic_preset_button(ui, state, setter, c, c.rect(8.0, y, 88.0, 26.0));
     logic_ab_button(ui, state, setter, c, c.rect(102.0, y, 72.0, 26.0));
@@ -737,11 +747,43 @@ fn draw_nebula_toolbar(
     logic_redo_button(ui, state, setter, c, c.rect(250.0, y, 64.0, 26.0));
     logic_midi_button(ui, state, c, c.rect(322.0, y, 92.0, 26.0));
 
+    let params = state.params.clone();
+    nebula_bool_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(422.0, y, 76.0, 26.0),
+        &params.tempo_sync,
+        if params.tempo_sync.value() {
+            "SYNC ON"
+        } else {
+            "SYNC OFF"
+        },
+        "top_sync",
+    );
+    nebula_bool_button(
+        ui,
+        state,
+        setter,
+        c,
+        c.rect(506.0, y, 88.0, 26.0),
+        &params.stereo_link,
+        if params.stereo_link.value() {
+            "LINKED"
+        } else {
+            "UNLINKED"
+        },
+        "top_link",
+    );
+    logic_routing_dropdown(ui, state, setter, c, c.rect(602.0, y, 118.0, 26.0));
+    logic_oversampling_dropdown(ui, state, setter, c, c.rect(728.0, y, 92.0, 26.0));
+
     let bypassed = state.params.bypass.load(Ordering::Relaxed);
     let fx = logic_button(
         ui,
         c,
-        c.rect(422.0, y, 78.0, 26.0),
+        c.rect(828.0, y, 78.0, 26.0),
         if bypassed { "FX OFF" } else { "FX ON" },
         !bypassed,
         "nebula_fx",
@@ -1048,71 +1090,14 @@ fn draw_nebula_global(
     setter: &ParamSetter<'_>,
     c: LogicCanvas,
 ) {
-    sync_routing_display_to_parameters(state, setter);
-
     let painter = ui.painter().clone();
     let x = GLOBAL_X;
     let params = state.params.clone();
 
     painter.text(
-        c.pos(x + 72.0, 169.0),
+        c.pos(x + 72.0, 150.0),
         Align2::CENTER_CENTER,
-        "GLOBAL",
-        c.font(18.0),
-        ACCENT,
-    );
-    painter.text(
-        c.pos(x + 72.0, 198.0),
-        Align2::CENTER_CENTER,
-        "ROUTING",
-        c.font(9.0),
-        TEXT_SEC,
-    );
-    logic_routing_dropdown(ui, state, setter, c, c.rect(x + 12.0, 210.0, 120.0, 25.0));
-
-    painter.text(
-        c.pos(x + 72.0, 250.0),
-        Align2::CENTER_CENTER,
-        "OVERSAMPLING",
-        c.font(9.0),
-        TEXT_SEC,
-    );
-    logic_oversampling_dropdown(ui, state, setter, c, c.rect(x + 22.0, 262.0, 100.0, 25.0));
-
-    nebula_bool_button(
-        ui,
-        state,
-        setter,
-        c,
-        c.rect(x + 22.0, 306.0, 100.0, 28.0),
-        &params.tempo_sync,
-        if params.tempo_sync.value() {
-            "SYNC ON"
-        } else {
-            "SYNC OFF"
-        },
-        "global_sync",
-    );
-    nebula_bool_button(
-        ui,
-        state,
-        setter,
-        c,
-        c.rect(x + 22.0, 346.0, 100.0, 28.0),
-        &params.stereo_link,
-        if params.stereo_link.value() {
-            "LINKED"
-        } else {
-            "UNLINKED"
-        },
-        "global_link",
-    );
-
-    nebula_divider(&painter, c, x + 14.0, 406.0, x + 130.0);
-    painter.text(
-        c.pos(x + 72.0, 430.0),
-        Align2::CENTER_CENTER,
-        "OUTPUT MIX",
+        "LEFT OUTPUT",
         c.font(14.0),
         ACCENT,
     );
@@ -1121,11 +1106,11 @@ fn draw_nebula_global(
         state,
         setter,
         c,
-        &params.output_mix_l,
-        x + 36.0,
-        486.0,
-        22.0,
-        "LEFT",
+        &params.wet_level_l,
+        x + 38.0,
+        205.0,
+        18.0,
+        "WET",
         ACCENT,
     );
     nebula_knob_cell(
@@ -1133,12 +1118,93 @@ fn draw_nebula_global(
         state,
         setter,
         c,
-        &params.output_mix_r,
-        x + 108.0,
-        486.0,
-        22.0,
-        "RIGHT",
+        &params.dry_level_l,
+        x + 106.0,
+        205.0,
+        18.0,
+        "DRY",
+        LOGIC_MINT,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.wet_pan_l,
+        x + 38.0,
+        287.0,
+        18.0,
+        "WET PAN",
+        ORANGE,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.dry_pan_l,
+        x + 106.0,
+        287.0,
+        18.0,
+        "DRY PAN",
+        PURPLE,
+    );
+
+    nebula_divider(&painter, c, x + 14.0, 346.0, x + 130.0);
+    painter.text(
+        c.pos(x + 72.0, 374.0),
+        Align2::CENTER_CENTER,
+        "RIGHT OUTPUT",
+        c.font(14.0),
         ACCENT,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.wet_level_r,
+        x + 38.0,
+        431.0,
+        18.0,
+        "WET",
+        ACCENT,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.dry_level_r,
+        x + 106.0,
+        431.0,
+        18.0,
+        "DRY",
+        LOGIC_MINT,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.wet_pan_r,
+        x + 38.0,
+        513.0,
+        18.0,
+        "WET PAN",
+        ORANGE,
+    );
+    nebula_knob_cell(
+        ui,
+        state,
+        setter,
+        c,
+        &params.dry_pan_r,
+        x + 106.0,
+        513.0,
+        18.0,
+        "DRY PAN",
+        PURPLE,
     );
 }
 
@@ -6008,6 +6074,14 @@ fn take_snapshot(params: &NebulaStereoDelayParams) -> ParamSnapshot {
         oversampling: oversampling_to_index(params.oversampling.value()),
         tempo_sync: params.tempo_sync.value(),
         stereo_link: params.stereo_link.value(),
+        wet_level_l: params.wet_level_l.value(),
+        wet_level_r: params.wet_level_r.value(),
+        dry_level_l: params.dry_level_l.value(),
+        dry_level_r: params.dry_level_r.value(),
+        wet_pan_l: params.wet_pan_l.value(),
+        wet_pan_r: params.wet_pan_r.value(),
+        dry_pan_l: params.dry_pan_l.value(),
+        dry_pan_r: params.dry_pan_r.value(),
         output_mix_l: params.output_mix_l.value(),
         output_mix_r: params.output_mix_r.value(),
     }
@@ -6089,6 +6163,14 @@ fn apply_snapshot(
     set_oversampling!(&params.oversampling, snap.oversampling);
     set_b!(&params.tempo_sync, snap.tempo_sync);
     set_b!(&params.stereo_link, snap.stereo_link);
+    set_f!(&params.wet_level_l, snap.wet_level_l);
+    set_f!(&params.wet_level_r, snap.wet_level_r);
+    set_f!(&params.dry_level_l, snap.dry_level_l);
+    set_f!(&params.dry_level_r, snap.dry_level_r);
+    set_f!(&params.wet_pan_l, snap.wet_pan_l);
+    set_f!(&params.wet_pan_r, snap.wet_pan_r);
+    set_f!(&params.dry_pan_l, snap.dry_pan_l);
+    set_f!(&params.dry_pan_r, snap.dry_pan_r);
     set_f!(&params.output_mix_l, snap.output_mix_l);
     set_f!(&params.output_mix_r, snap.output_mix_r);
 }
@@ -6133,8 +6215,16 @@ fn preset_values_from_snapshot(snap: &ParamSnapshot) -> PresetValues {
         oversampling: snap.oversampling as u8,
         tempo_sync: snap.tempo_sync,
         stereo_link: snap.stereo_link,
-        output_mix_l: snap.output_mix_l,
-        output_mix_r: snap.output_mix_r,
+        wet_level_l: snap.wet_level_l,
+        wet_level_r: snap.wet_level_r,
+        dry_level_l: snap.dry_level_l,
+        dry_level_r: snap.dry_level_r,
+        wet_pan_l: snap.wet_pan_l,
+        wet_pan_r: snap.wet_pan_r,
+        dry_pan_l: snap.dry_pan_l,
+        dry_pan_r: snap.dry_pan_r,
+        output_mix_l: 1.0,
+        output_mix_r: 1.0,
     }
 }
 
@@ -6288,8 +6378,14 @@ fn linked_float_counterpart<'a>(
         "Feedback R" => Some(&params.feedback_l),
         "Crossfeed L-R" => Some(&params.crossfeed_rl),
         "Crossfeed R-L" => Some(&params.crossfeed_lr),
-        "Output Mix L" => Some(&params.output_mix_r),
-        "Output Mix R" => Some(&params.output_mix_l),
+        "Wet L" => Some(&params.wet_level_r),
+        "Wet R" => Some(&params.wet_level_l),
+        "Dry L" => Some(&params.dry_level_r),
+        "Dry R" => Some(&params.dry_level_l),
+        "Wet Pan L" => Some(&params.wet_pan_r),
+        "Wet Pan R" => Some(&params.wet_pan_l),
+        "Dry Pan L" => Some(&params.dry_pan_r),
+        "Dry Pan R" => Some(&params.dry_pan_l),
         _ => None,
     }
 }

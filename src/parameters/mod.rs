@@ -12,7 +12,7 @@
 //! | Per-Channel (L/R)   | Input mode, delay time, note, deviation, halve/double,  |
 //! |                     | low/high cut, feedback, feedback phase                   |
 //! | Crossfeed           | L→R amount/phase, R→L amount/phase                     |
-//! | Global / Output     | Routing, oversampling, tempo sync, stereo link, output mix |
+//! | Global / Output     | Routing, oversampling, tempo sync, stereo link, wet/dry levels and pans |
 //! | Internal State      | FX bypass, A/B snapshots, undo/redo, MIDI learn         |
 //!
 //! # Stable IDs
@@ -315,7 +315,25 @@ pub struct ParamSnapshot {
     pub oversampling: usize,
     pub tempo_sync: bool,
     pub stereo_link: bool,
+    #[serde(default = "default_wet_level")]
+    pub wet_level_l: f32,
+    #[serde(default = "default_wet_level")]
+    pub wet_level_r: f32,
+    #[serde(default = "default_dry_level")]
+    pub dry_level_l: f32,
+    #[serde(default = "default_dry_level")]
+    pub dry_level_r: f32,
+    #[serde(default = "default_left_pan")]
+    pub wet_pan_l: f32,
+    #[serde(default = "default_right_pan")]
+    pub wet_pan_r: f32,
+    #[serde(default = "default_left_pan")]
+    pub dry_pan_l: f32,
+    #[serde(default = "default_right_pan")]
+    pub dry_pan_r: f32,
+    #[serde(default = "default_wet_level")]
     pub output_mix_l: f32,
+    #[serde(default = "default_wet_level")]
     pub output_mix_r: f32,
 }
 
@@ -374,6 +392,14 @@ impl ParamSnapshot {
             oversampling: 0, // Off
             tempo_sync: false,
             stereo_link: false,
+            wet_level_l: default_wet_level(),
+            wet_level_r: default_wet_level(),
+            dry_level_l: default_dry_level(),
+            dry_level_r: default_dry_level(),
+            wet_pan_l: default_left_pan(),
+            wet_pan_r: default_right_pan(),
+            dry_pan_l: default_left_pan(),
+            dry_pan_r: default_right_pan(),
             output_mix_l: 1.0,
             output_mix_r: 1.0,
         }
@@ -516,6 +542,55 @@ fn parse_percentage(s: &str) -> Option<f32> {
         .parse::<f32>()
         .ok()
         .map(|v| v / 100.0)
+}
+
+fn default_wet_level() -> f32 {
+    1.0
+}
+
+fn default_dry_level() -> f32 {
+    0.0
+}
+
+fn default_left_pan() -> f32 {
+    0.0
+}
+
+fn default_right_pan() -> f32 {
+    1.0
+}
+
+fn format_pan(val: f32) -> String {
+    let pan = val.clamp(0.0, 1.0);
+    if (pan - 0.5).abs() <= 0.005 {
+        "C".to_string()
+    } else if pan < 0.5 {
+        format!("L{:.0}", (1.0 - pan * 2.0) * 100.0)
+    } else {
+        format!("R{:.0}", ((pan - 0.5) * 2.0) * 100.0)
+    }
+}
+
+fn parse_pan(s: &str) -> Option<f32> {
+    let text = s.trim().to_lowercase();
+    if text == "c" || text == "center" || text == "centre" {
+        return Some(0.5);
+    }
+
+    if let Some(rest) = text.strip_prefix('l') {
+        let amount = rest.trim().trim_end_matches('%').parse::<f32>().ok()?;
+        return Some((0.5 - (amount / 100.0) * 0.5).clamp(0.0, 0.5));
+    }
+
+    if let Some(rest) = text.strip_prefix('r') {
+        let amount = rest.trim().trim_end_matches('%').parse::<f32>().ok()?;
+        return Some((0.5 + (amount / 100.0) * 0.5).clamp(0.5, 1.0));
+    }
+
+    text.trim_end_matches('%')
+        .parse::<f32>()
+        .ok()
+        .map(|v| (v / 100.0).clamp(0.0, 1.0))
 }
 
 /// Format a gain trim in dB.
@@ -738,14 +813,46 @@ pub struct NebulaStereoDelayParams {
     #[id = "slnk"]
     pub stereo_link: BoolParam,
 
-    // ── Global: Output Mix ───────────────────────────────────────────────
-    /// Dry/wet mix for the left channel (0.0 = dry, 1.0 = full wet).
-    /// Default: 1.0 (100%).
+    // ── Output Matrix ───────────────────────────────────────────────────
+    /// Level for the left wet signal before output panning.
+    #[id = "wll"]
+    pub wet_level_l: FloatParam,
+
+    /// Level for the right wet signal before output panning.
+    #[id = "wlr"]
+    pub wet_level_r: FloatParam,
+
+    /// Level for the left dry signal before output panning.
+    #[id = "dll"]
+    pub dry_level_l: FloatParam,
+
+    /// Level for the right dry signal before output panning.
+    #[id = "dlr"]
+    pub dry_level_r: FloatParam,
+
+    /// Pan position for the left wet signal. 0.0 = left, 0.5 = center, 1.0 = right.
+    #[id = "wpl"]
+    pub wet_pan_l: FloatParam,
+
+    /// Pan position for the right wet signal. 0.0 = left, 0.5 = center, 1.0 = right.
+    #[id = "wpr"]
+    pub wet_pan_r: FloatParam,
+
+    /// Pan position for the left dry signal. 0.0 = left, 0.5 = center, 1.0 = right.
+    #[id = "dpl"]
+    pub dry_pan_l: FloatParam,
+
+    /// Pan position for the right dry signal. 0.0 = left, 0.5 = center, 1.0 = right.
+    #[id = "dpr"]
+    pub dry_pan_r: FloatParam,
+
+    // ── Legacy Output Mix ────────────────────────────────────────────────
+    /// Hidden dry/wet mix for old projects/presets. The visible output
+    /// controls above are the current DSP path.
     #[id = "oml"]
     pub output_mix_l: FloatParam,
 
-    /// Dry/wet mix for the right channel (0.0 = dry, 1.0 = full wet).
-    /// Default: 1.0 (100%).
+    /// Hidden dry/wet mix for old projects/presets.
     #[id = "omr"]
     pub output_mix_r: FloatParam,
 
@@ -1206,7 +1313,94 @@ impl Default for NebulaStereoDelayParams {
                 })),
 
             // ══════════════════════════════════════════════════════════
-            // Global: Output Mix
+            // Output Matrix
+            // ══════════════════════════════════════════════════════════
+            wet_level_l: FloatParam::new(
+                "Wet L",
+                default_wet_level(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
+            .with_unit("%"),
+
+            wet_level_r: FloatParam::new(
+                "Wet R",
+                default_wet_level(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
+            .with_unit("%"),
+
+            dry_level_l: FloatParam::new(
+                "Dry L",
+                default_dry_level(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
+            .with_unit("%"),
+
+            dry_level_r: FloatParam::new(
+                "Dry R",
+                default_dry_level(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_percentage))
+            .with_string_to_value(Arc::new(parse_percentage))
+            .with_unit("%"),
+
+            wet_pan_l: FloatParam::new(
+                "Wet Pan L",
+                default_left_pan(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_pan))
+            .with_string_to_value(Arc::new(parse_pan)),
+
+            wet_pan_r: FloatParam::new(
+                "Wet Pan R",
+                default_right_pan(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_pan))
+            .with_string_to_value(Arc::new(parse_pan)),
+
+            dry_pan_l: FloatParam::new(
+                "Dry Pan L",
+                default_left_pan(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_pan))
+            .with_string_to_value(Arc::new(parse_pan)),
+
+            dry_pan_r: FloatParam::new(
+                "Dry Pan R",
+                default_right_pan(),
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(SMOOTH_MS))
+            .with_step_size(0.01)
+            .with_value_to_string(Arc::new(format_pan))
+            .with_string_to_value(Arc::new(parse_pan)),
+
+            // ══════════════════════════════════════════════════════════
+            // Legacy Output Mix
             // ══════════════════════════════════════════════════════════
             output_mix_l: FloatParam::new(
                 "Output Mix L",
@@ -1217,7 +1411,8 @@ impl Default for NebulaStereoDelayParams {
             .with_step_size(0.01)
             .with_value_to_string(Arc::new(format_percentage))
             .with_string_to_value(Arc::new(parse_percentage))
-            .with_unit("%"),
+            .with_unit("%")
+            .hide(),
 
             output_mix_r: FloatParam::new(
                 "Output Mix R",
@@ -1228,7 +1423,8 @@ impl Default for NebulaStereoDelayParams {
             .with_step_size(0.01)
             .with_value_to_string(Arc::new(format_percentage))
             .with_string_to_value(Arc::new(parse_percentage))
-            .with_unit("%"),
+            .with_unit("%")
+            .hide(),
 
             // ══════════════════════════════════════════════════════════
             // Internal State
@@ -1288,6 +1484,14 @@ impl NebulaStereoDelayParams {
             oversampling: self.oversampling.value().to_index(),
             tempo_sync: self.tempo_sync.value(),
             stereo_link: self.stereo_link.value(),
+            wet_level_l: self.wet_level_l.value(),
+            wet_level_r: self.wet_level_r.value(),
+            dry_level_l: self.dry_level_l.value(),
+            dry_level_r: self.dry_level_r.value(),
+            wet_pan_l: self.wet_pan_l.value(),
+            wet_pan_r: self.wet_pan_r.value(),
+            dry_pan_l: self.dry_pan_l.value(),
+            dry_pan_r: self.dry_pan_r.value(),
             output_mix_l: self.output_mix_l.value(),
             output_mix_r: self.output_mix_r.value(),
         }
@@ -1333,6 +1537,14 @@ impl NebulaStereoDelayParams {
         setter.set_parameter(&self.feedback_r, snapshot.feedback_r);
         setter.set_parameter(&self.crossfeed_lr, snapshot.crossfeed_lr);
         setter.set_parameter(&self.crossfeed_rl, snapshot.crossfeed_rl);
+        setter.set_parameter(&self.wet_level_l, snapshot.wet_level_l);
+        setter.set_parameter(&self.wet_level_r, snapshot.wet_level_r);
+        setter.set_parameter(&self.dry_level_l, snapshot.dry_level_l);
+        setter.set_parameter(&self.dry_level_r, snapshot.dry_level_r);
+        setter.set_parameter(&self.wet_pan_l, snapshot.wet_pan_l);
+        setter.set_parameter(&self.wet_pan_r, snapshot.wet_pan_r);
+        setter.set_parameter(&self.dry_pan_l, snapshot.dry_pan_l);
+        setter.set_parameter(&self.dry_pan_r, snapshot.dry_pan_r);
         setter.set_parameter(&self.output_mix_l, snapshot.output_mix_l);
         setter.set_parameter(&self.output_mix_r, snapshot.output_mix_r);
 
@@ -1531,6 +1743,14 @@ impl NebulaStereoDelayParams {
             halve_r: self.halve_r.value(),
             double_l: self.double_l.value(),
             double_r: self.double_r.value(),
+            wet_level_l: self.wet_level_l.value() as f64,
+            wet_level_r: self.wet_level_r.value() as f64,
+            dry_level_l: self.dry_level_l.value() as f64,
+            dry_level_r: self.dry_level_r.value() as f64,
+            wet_pan_l: self.wet_pan_l.value() as f64,
+            wet_pan_r: self.wet_pan_r.value() as f64,
+            dry_pan_l: self.dry_pan_l.value() as f64,
+            dry_pan_r: self.dry_pan_r.value() as f64,
             output_mix_l: self.output_mix_l.value() as f64,
             output_mix_r: self.output_mix_r.value() as f64,
             bypass: self.is_bypassed(),

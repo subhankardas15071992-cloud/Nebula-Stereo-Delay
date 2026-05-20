@@ -309,7 +309,25 @@ pub struct DelayParams {
     /// Double the right-channel delay time.
     pub double_r: bool,
 
-    // ── Output ────────────────────────────────────────────────────────
+    // ── Output matrix ─────────────────────────────────────────────────
+    /// Left wet signal level before panning.
+    pub wet_level_l: f64,
+    /// Right wet signal level before panning.
+    pub wet_level_r: f64,
+    /// Left dry signal level before panning.
+    pub dry_level_l: f64,
+    /// Right dry signal level before panning.
+    pub dry_level_r: f64,
+    /// Left wet signal pan. 0.0 = left, 0.5 = center, 1.0 = right.
+    pub wet_pan_l: f64,
+    /// Right wet signal pan. 0.0 = left, 0.5 = center, 1.0 = right.
+    pub wet_pan_r: f64,
+    /// Left dry signal pan. 0.0 = left, 0.5 = center, 1.0 = right.
+    pub dry_pan_l: f64,
+    /// Right dry signal pan. 0.0 = left, 0.5 = center, 1.0 = right.
+    pub dry_pan_r: f64,
+
+    // ── Legacy output mix ─────────────────────────────────────────────
     /// Dry/wet mix for the left channel (0.0 = fully dry, 1.0 = fully wet).
     pub output_mix_l: f64,
     /// Dry/wet mix for the right channel (0.0 = fully dry, 1.0 = fully wet).
@@ -363,6 +381,14 @@ impl Default for DelayParams {
             halve_r: false,
             double_l: false,
             double_r: false,
+            wet_level_l: 1.0,
+            wet_level_r: 1.0,
+            dry_level_l: 0.0,
+            dry_level_r: 0.0,
+            wet_pan_l: 0.0,
+            wet_pan_r: 1.0,
+            dry_pan_l: 0.0,
+            dry_pan_r: 1.0,
             output_mix_l: 1.0,
             output_mix_r: 1.0,
             bypass: false,
@@ -795,6 +821,14 @@ pub struct DelayEngine {
     smooth_feedback_r: SmoothedValue,
     smooth_crossfeed_lr: SmoothedValue,
     smooth_crossfeed_rl: SmoothedValue,
+    smooth_wet_level_l: SmoothedValue,
+    smooth_wet_level_r: SmoothedValue,
+    smooth_dry_level_l: SmoothedValue,
+    smooth_dry_level_r: SmoothedValue,
+    smooth_wet_pan_l: SmoothedValue,
+    smooth_wet_pan_r: SmoothedValue,
+    smooth_dry_pan_l: SmoothedValue,
+    smooth_dry_pan_r: SmoothedValue,
     smooth_mix_l: SmoothedValue,
     smooth_mix_r: SmoothedValue,
 
@@ -880,6 +914,14 @@ impl DelayEngine {
             smooth_feedback_r: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
             smooth_crossfeed_lr: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
             smooth_crossfeed_rl: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_wet_level_l: SmoothedValue::new(1.0, SMOOTH_SAMPLES),
+            smooth_wet_level_r: SmoothedValue::new(1.0, SMOOTH_SAMPLES),
+            smooth_dry_level_l: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_dry_level_r: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_wet_pan_l: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_wet_pan_r: SmoothedValue::new(1.0, SMOOTH_SAMPLES),
+            smooth_dry_pan_l: SmoothedValue::new(0.0, SMOOTH_SAMPLES),
+            smooth_dry_pan_r: SmoothedValue::new(1.0, SMOOTH_SAMPLES),
             smooth_mix_l: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             smooth_mix_r: SmoothedValue::new(0.5, SMOOTH_SAMPLES),
             bypass_latch: false,
@@ -934,6 +976,18 @@ impl DelayEngine {
             .reset(self.smooth_crossfeed_lr.target);
         self.smooth_crossfeed_rl
             .reset(self.smooth_crossfeed_rl.target);
+        self.smooth_wet_level_l
+            .reset(self.smooth_wet_level_l.target);
+        self.smooth_wet_level_r
+            .reset(self.smooth_wet_level_r.target);
+        self.smooth_dry_level_l
+            .reset(self.smooth_dry_level_l.target);
+        self.smooth_dry_level_r
+            .reset(self.smooth_dry_level_r.target);
+        self.smooth_wet_pan_l.reset(self.smooth_wet_pan_l.target);
+        self.smooth_wet_pan_r.reset(self.smooth_wet_pan_r.target);
+        self.smooth_dry_pan_l.reset(self.smooth_dry_pan_l.target);
+        self.smooth_dry_pan_r.reset(self.smooth_dry_pan_r.target);
         self.smooth_mix_l.reset(self.smooth_mix_l.target);
         self.smooth_mix_r.reset(self.smooth_mix_r.target);
     }
@@ -1049,6 +1103,22 @@ impl DelayEngine {
             .set_target(p.crossfeed_lr.clamp(0.0, 1.0));
         self.smooth_crossfeed_rl
             .set_target(p.crossfeed_rl.clamp(0.0, 1.0));
+        self.smooth_wet_level_l
+            .set_target(p.wet_level_l.clamp(0.0, 1.0));
+        self.smooth_wet_level_r
+            .set_target(p.wet_level_r.clamp(0.0, 1.0));
+        self.smooth_dry_level_l
+            .set_target(p.dry_level_l.clamp(0.0, 1.0));
+        self.smooth_dry_level_r
+            .set_target(p.dry_level_r.clamp(0.0, 1.0));
+        self.smooth_wet_pan_l
+            .set_target(p.wet_pan_l.clamp(0.0, 1.0));
+        self.smooth_wet_pan_r
+            .set_target(p.wet_pan_r.clamp(0.0, 1.0));
+        self.smooth_dry_pan_l
+            .set_target(p.dry_pan_l.clamp(0.0, 1.0));
+        self.smooth_dry_pan_r
+            .set_target(p.dry_pan_r.clamp(0.0, 1.0));
         self.smooth_mix_l.set_target(p.output_mix_l.clamp(0.0, 1.0));
         self.smooth_mix_r.set_target(p.output_mix_r.clamp(0.0, 1.0));
 
@@ -1067,6 +1137,14 @@ impl DelayEngine {
         let s_fb_r = self.smooth_feedback_r.next();
         let s_cf_lr = self.smooth_crossfeed_lr.next();
         let s_cf_rl = self.smooth_crossfeed_rl.next();
+        let s_wet_level_l = self.smooth_wet_level_l.next();
+        let s_wet_level_r = self.smooth_wet_level_r.next();
+        let s_dry_level_l = self.smooth_dry_level_l.next();
+        let s_dry_level_r = self.smooth_dry_level_r.next();
+        let s_wet_pan_l = self.smooth_wet_pan_l.next();
+        let s_wet_pan_r = self.smooth_wet_pan_r.next();
+        let s_dry_pan_l = self.smooth_dry_pan_l.next();
+        let s_dry_pan_r = self.smooth_dry_pan_r.next();
         let s_mix_l = self.smooth_mix_l.next();
         let s_mix_r = self.smooth_mix_r.next();
 
@@ -1114,10 +1192,30 @@ impl DelayEngine {
         // ── 12. Output routing ────────────────────────────────────────
         let (wet_l, wet_r) = Self::apply_output_routing(p.routing, filt_l, filt_r);
 
-        // ── 13. Dry/wet mix ───────────────────────────────────────────
-        //   out = dry * (1 - mix) + wet * mix
-        let out_l = in_l * (1.0 - s_mix_l) + wet_l * s_mix_l;
-        let out_r = in_r * (1.0 - s_mix_r) + wet_r * s_mix_r;
+        // ── 13. Output matrix ────────────────────────────────────────
+        //
+        // The visible controls are independent wet/dry levels plus
+        // per-source pans. The hidden legacy mix params still shape older
+        // projects that automated Output Mix L/R before these controls
+        // existed.
+        let wet_gain_l = s_wet_level_l * s_mix_l;
+        let wet_gain_r = s_wet_level_r * s_mix_r;
+        let dry_gain_l = (s_dry_level_l + (1.0 - s_mix_l)).clamp(0.0, 1.0);
+        let dry_gain_r = (s_dry_level_r + (1.0 - s_mix_r)).clamp(0.0, 1.0);
+
+        let (dry_l_to_l, dry_l_to_r) = Self::pan_gains(s_dry_pan_l);
+        let (dry_r_to_l, dry_r_to_r) = Self::pan_gains(s_dry_pan_r);
+        let (wet_l_to_l, wet_l_to_r) = Self::pan_gains(s_wet_pan_l);
+        let (wet_r_to_l, wet_r_to_r) = Self::pan_gains(s_wet_pan_r);
+
+        let out_l = in_l * dry_gain_l * dry_l_to_l
+            + in_r * dry_gain_r * dry_r_to_l
+            + wet_l * wet_gain_l * wet_l_to_l
+            + wet_r * wet_gain_r * wet_r_to_l;
+        let out_r = in_l * dry_gain_l * dry_l_to_r
+            + in_r * dry_gain_r * dry_r_to_r
+            + wet_l * wet_gain_l * wet_l_to_r
+            + wet_r * wet_gain_r * wet_r_to_r;
 
         let out_l = protect_output_sample(out_l * s_output_gain);
         let out_r = protect_output_sample(out_r * s_output_gain);
@@ -1300,6 +1398,13 @@ impl DelayEngine {
     fn apply_output_routing(routing: RoutingMode, wet_l: f64, wet_r: f64) -> (f64, f64) {
         let _ = routing;
         (wet_l, wet_r)
+    }
+
+    /// Equal-power pan gains for a single mono source.
+    #[inline]
+    fn pan_gains(pan: f64) -> (f64, f64) {
+        let angle = pan.clamp(0.0, 1.0) * std::f64::consts::FRAC_PI_2;
+        (angle.cos(), angle.sin())
     }
 }
 
@@ -1499,6 +1604,70 @@ mod tests {
         let expected_gain = db_to_gain(params.input_level_db + params.output_level_db);
         assert!((l - 0.25 * expected_gain).abs() < 1e-6);
         assert!((r - -0.5 * expected_gain).abs() < 1e-6);
+    }
+
+    #[test]
+    fn output_matrix_dry_and_wet_levels_are_independent() {
+        let mut engine = DelayEngine::new(44100.0);
+        let muted = DelayParams {
+            wet_level_l: 0.0,
+            wet_level_r: 0.0,
+            dry_level_l: 0.0,
+            dry_level_r: 0.0,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
+            ..DelayParams::default()
+        };
+        for _ in 0..1000 {
+            engine.process(0.0, 0.0, &muted);
+        }
+        let (l, r) = engine.process(0.4, -0.25, &muted);
+        assert!(l.abs() < 1e-9, "muted output matrix leaked left dry signal");
+        assert!(
+            r.abs() < 1e-9,
+            "muted output matrix leaked right dry signal"
+        );
+
+        let mut engine = DelayEngine::new(44100.0);
+        let dry_only = DelayParams {
+            wet_level_l: 0.0,
+            wet_level_r: 0.0,
+            dry_level_l: 1.0,
+            dry_level_r: 1.0,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
+            ..DelayParams::default()
+        };
+        for _ in 0..1000 {
+            engine.process(0.0, 0.0, &dry_only);
+        }
+        let (l, r) = engine.process(0.4, -0.25, &dry_only);
+        assert!((l - 0.4).abs() < 1e-6);
+        assert!((r + 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn output_matrix_pans_sources_independently() {
+        let mut engine = DelayEngine::new(44100.0);
+        let params = DelayParams {
+            wet_level_l: 0.0,
+            wet_level_r: 0.0,
+            dry_level_l: 1.0,
+            dry_level_r: 0.0,
+            dry_pan_l: 1.0,
+            output_mix_l: 1.0,
+            output_mix_r: 1.0,
+            ..DelayParams::default()
+        };
+        for _ in 0..1000 {
+            engine.process(0.0, 0.0, &params);
+        }
+        let (l, r) = engine.process(0.5, 0.0, &params);
+        assert!(l.abs() < 1e-6, "left dry source should pan away from left");
+        assert!(
+            (r - 0.5).abs() < 1e-6,
+            "left dry source should pan to right"
+        );
     }
 
     #[test]

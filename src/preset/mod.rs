@@ -172,13 +172,31 @@ pub struct PresetValues {
     #[serde(default)]
     pub crossfeed_phase_rl: bool,
 
-    // ── Global ─────────────────────────────────────────────────────────
+    // ── Global / Output ───────────────────────────────────────────────
     pub routing: u8,
     #[serde(default)]
     pub oversampling: u8,
     pub tempo_sync: bool,
     pub stereo_link: bool,
+    #[serde(default = "default_wet_level")]
+    pub wet_level_l: f32,
+    #[serde(default = "default_wet_level")]
+    pub wet_level_r: f32,
+    #[serde(default = "default_dry_level")]
+    pub dry_level_l: f32,
+    #[serde(default = "default_dry_level")]
+    pub dry_level_r: f32,
+    #[serde(default = "default_left_pan")]
+    pub wet_pan_l: f32,
+    #[serde(default = "default_right_pan")]
+    pub wet_pan_r: f32,
+    #[serde(default = "default_left_pan")]
+    pub dry_pan_l: f32,
+    #[serde(default = "default_right_pan")]
+    pub dry_pan_r: f32,
+    #[serde(default = "default_wet_level")]
     pub output_mix_l: f32,
+    #[serde(default = "default_wet_level")]
     pub output_mix_r: f32,
 }
 
@@ -219,14 +237,46 @@ impl Default for PresetValues {
             oversampling: 0, // Off
             tempo_sync: false,
             stereo_link: false,
+            wet_level_l: default_wet_level(),
+            wet_level_r: default_wet_level(),
+            dry_level_l: default_dry_level(),
+            dry_level_r: default_dry_level(),
+            wet_pan_l: default_left_pan(),
+            wet_pan_r: default_right_pan(),
+            dry_pan_l: default_left_pan(),
+            dry_pan_r: default_right_pan(),
             output_mix_l: 1.0,
             output_mix_r: 1.0,
         }
     }
 }
 
+fn default_wet_level() -> f32 {
+    1.0
+}
+
+fn default_dry_level() -> f32 {
+    0.0
+}
+
+fn default_left_pan() -> f32 {
+    0.0
+}
+
+fn default_right_pan() -> f32 {
+    1.0
+}
+
 fn default_filter_slope() -> f32 {
     12.0
+}
+
+fn visible_output_levels(wet: f32, dry: f32, legacy_mix: f32) -> (f32, f32) {
+    let legacy_mix = legacy_mix.clamp(0.0, 1.0);
+    (
+        (wet * legacy_mix).clamp(0.0, 1.0),
+        (dry + (1.0 - legacy_mix)).clamp(0.0, 1.0),
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -418,8 +468,18 @@ impl PresetManager {
         );
         setter.set_parameter(&params.tempo_sync, v.tempo_sync);
         setter.set_parameter(&params.stereo_link, v.stereo_link);
-        setter.set_parameter(&params.output_mix_l, v.output_mix_l);
-        setter.set_parameter(&params.output_mix_r, v.output_mix_r);
+        let (wet_l, dry_l) = visible_output_levels(v.wet_level_l, v.dry_level_l, v.output_mix_l);
+        let (wet_r, dry_r) = visible_output_levels(v.wet_level_r, v.dry_level_r, v.output_mix_r);
+        setter.set_parameter(&params.wet_level_l, wet_l);
+        setter.set_parameter(&params.wet_level_r, wet_r);
+        setter.set_parameter(&params.dry_level_l, dry_l);
+        setter.set_parameter(&params.dry_level_r, dry_r);
+        setter.set_parameter(&params.wet_pan_l, v.wet_pan_l);
+        setter.set_parameter(&params.wet_pan_r, v.wet_pan_r);
+        setter.set_parameter(&params.dry_pan_l, v.dry_pan_l);
+        setter.set_parameter(&params.dry_pan_r, v.dry_pan_r);
+        setter.set_parameter(&params.output_mix_l, 1.0);
+        setter.set_parameter(&params.output_mix_r, 1.0);
     }
 
     /// Delete a user preset by name.
@@ -548,6 +608,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 1.0,
                 output_mix_r: 1.0,
             },
@@ -596,6 +664,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.7, // Wet level below unity for subtle effect
                 output_mix_r: 0.7,
             },
@@ -645,6 +721,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.85,
                 output_mix_r: 0.85,
             },
@@ -694,6 +778,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: true,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.8,
                 output_mix_r: 0.8,
             },
@@ -742,6 +834,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: true,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.75,
                 output_mix_r: 0.75,
             },
@@ -791,6 +891,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.6, // Mix below unity — augment, don't replace
                 output_mix_r: 0.6,
             },
@@ -842,6 +950,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.75,
                 output_mix_r: 0.75,
             },
@@ -892,6 +1008,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: false,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.65,
                 output_mix_r: 0.65,
             },
@@ -942,6 +1066,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0,  // Off
                 tempo_sync: true, // Essential for rhythmic use
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.7,
                 output_mix_r: 0.7,
             },
@@ -992,6 +1124,14 @@ fn build_factory_presets() -> Vec<PresetData> {
                 oversampling: 0, // Off
                 tempo_sync: true,
                 stereo_link: false,
+                wet_level_l: default_wet_level(),
+                wet_level_r: default_wet_level(),
+                dry_level_l: default_dry_level(),
+                dry_level_r: default_dry_level(),
+                wet_pan_l: default_left_pan(),
+                wet_pan_r: default_right_pan(),
+                dry_pan_l: default_left_pan(),
+                dry_pan_r: default_right_pan(),
                 output_mix_l: 0.75,
                 output_mix_r: 0.75,
             },

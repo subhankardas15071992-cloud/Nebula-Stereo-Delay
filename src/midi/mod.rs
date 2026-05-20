@@ -129,7 +129,7 @@ pub struct MidiMapping {
 const CC_SLOT_COUNT: usize = 16 * 128; // 2048
 
 /// Number of MIDI-controllable plugin targets.
-pub const MIDI_TARGET_COUNT: usize = 37;
+pub const MIDI_TARGET_COUNT: usize = 45;
 
 const NO_TARGET: u16 = u16::MAX;
 
@@ -174,6 +174,14 @@ pub enum MidiTarget {
     OutputMixR,
     Oversampling,
     Bypass,
+    WetLevelL,
+    WetLevelR,
+    DryLevelL,
+    DryLevelR,
+    WetPanL,
+    WetPanR,
+    DryPanL,
+    DryPanR,
 }
 
 impl MidiTarget {
@@ -222,6 +230,14 @@ impl MidiTarget {
             34 => Some(Self::OutputMixR),
             35 => Some(Self::Oversampling),
             36 => Some(Self::Bypass),
+            37 => Some(Self::WetLevelL),
+            38 => Some(Self::WetLevelR),
+            39 => Some(Self::DryLevelL),
+            40 => Some(Self::DryLevelR),
+            41 => Some(Self::WetPanL),
+            42 => Some(Self::WetPanR),
+            43 => Some(Self::DryPanL),
+            44 => Some(Self::DryPanR),
             _ => None,
         }
     }
@@ -265,6 +281,14 @@ impl MidiTarget {
             "output_mix_r" => Some(Self::OutputMixR),
             "oversampling" => Some(Self::Oversampling),
             "bypass" | "fx_bypass" => Some(Self::Bypass),
+            "wet_l" | "wet_level_l" => Some(Self::WetLevelL),
+            "wet_r" | "wet_level_r" => Some(Self::WetLevelR),
+            "dry_l" | "dry_level_l" => Some(Self::DryLevelL),
+            "dry_r" | "dry_level_r" => Some(Self::DryLevelR),
+            "wet_pan_l" => Some(Self::WetPanL),
+            "wet_pan_r" => Some(Self::WetPanR),
+            "dry_pan_l" => Some(Self::DryPanL),
+            "dry_pan_r" => Some(Self::DryPanR),
             _ => None,
         }
     }
@@ -308,6 +332,14 @@ impl MidiTarget {
             Self::OutputMixR => "output_mix_r",
             Self::Oversampling => "oversampling",
             Self::Bypass => "bypass",
+            Self::WetLevelL => "wet_l",
+            Self::WetLevelR => "wet_r",
+            Self::DryLevelL => "dry_l",
+            Self::DryLevelR => "dry_r",
+            Self::WetPanL => "wet_pan_l",
+            Self::WetPanR => "wet_pan_r",
+            Self::DryPanL => "dry_pan_l",
+            Self::DryPanR => "dry_pan_r",
         }
     }
 }
@@ -1163,7 +1195,7 @@ mod tests {
 
     #[test]
     fn midi_target_count_matches_indices() {
-        assert_eq!(MidiTarget::Bypass.index() + 1, MIDI_TARGET_COUNT);
+        assert_eq!(MidiTarget::DryPanR.index() + 1, MIDI_TARGET_COUNT);
     }
 
     #[test]
