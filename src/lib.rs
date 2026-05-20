@@ -150,7 +150,7 @@ impl Plugin for NebulaStereoDelay {
     const VENDOR: &'static str = "Nebula Audio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
-    const VERSION: &'static str = "1.0.0";
+    const VERSION: &'static str = "1.1.0";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
         main_input_channels: Some(new_nonzero_u32(2)),

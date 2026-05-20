@@ -65,7 +65,7 @@ pub struct PresetData {
     pub author: String,
     /// ISO 8601 creation timestamp (e.g. "2025-01-15T12:00:00Z").
     pub created: String,
-    /// Preset format version, currently "1.0.0".
+    /// Preset format version, currently "1.1.0".
     pub version: String,
     /// All parameter plain values.
     pub values: PresetValues,
@@ -552,7 +552,7 @@ impl Default for PresetManager {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Current preset format version.
-const PRESET_VERSION: &str = "1.0.0";
+const PRESET_VERSION: &str = "1.1.0";
 
 /// Factory preset author string.
 const FACTORY_AUTHOR: &str = "Nebula Audio";

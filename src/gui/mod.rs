@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────────────────────────┐
-//! │ Top Bar: Name v1.0 | Preset | A/B | ← → | FX ON | FREE | UNLINKED │
+//! │ Top Bar: Name v1.1.0 | Preset | A/B | ← → | FX ON | FREE | UNLINKED │
 //! ├───────────────────────┬────────┬───────────────────────────────┤
 //! │  LEFT Channel Panel   │ Center │  RIGHT Channel Panel          │
 //! │  Input Mode           │Routing │  Input Mode                   │
@@ -451,7 +451,7 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
     painter.text(
         c.pos(LOGIC_W - 18.0, 34.0),
         Align2::RIGHT_CENTER,
-        "v1.0",
+        "v1.1.0",
         c.font(11.0),
         TEXT_SEC,
     );
@@ -1132,7 +1132,7 @@ fn draw_nebula_global(
         c,
         &params.wet_pan_l,
         x + 38.0,
-        287.0,
+        296.0,
         18.0,
         "WET PAN",
         ORANGE,
@@ -1144,13 +1144,13 @@ fn draw_nebula_global(
         c,
         &params.dry_pan_l,
         x + 106.0,
-        287.0,
+        296.0,
         18.0,
         "DRY PAN",
         PURPLE,
     );
 
-    nebula_divider(&painter, c, x + 14.0, 346.0, x + 130.0);
+    nebula_divider(&painter, c, x + 14.0, 356.0, x + 130.0);
     painter.text(
         c.pos(x + 72.0, 374.0),
         Align2::CENTER_CENTER,
@@ -1189,7 +1189,7 @@ fn draw_nebula_global(
         c,
         &params.wet_pan_r,
         x + 38.0,
-        513.0,
+        522.0,
         18.0,
         "WET PAN",
         ORANGE,
@@ -1201,7 +1201,7 @@ fn draw_nebula_global(
         c,
         &params.dry_pan_r,
         x + 106.0,
-        513.0,
+        522.0,
         18.0,
         "DRY PAN",
         PURPLE,
@@ -1595,7 +1595,7 @@ fn draw_logic_command_bar(
     painter.text(
         c.pos(154.0, 18.0),
         Align2::LEFT_CENTER,
-        "v1.0",
+        "v1.1.0",
         c.font(9.0),
         LOGIC_DIM,
     );
@@ -2257,6 +2257,7 @@ fn logic_float_knob(
         param.modulated_normalized_value(),
         accent,
         true,
+        is_reverse_arc_param(param.name()),
     );
     let resp = resp.on_hover_text(format!("{}: {}", param.name(), param));
     add_midi_learn_menu(ui, &resp, &param_id_for(param.name()), state);
@@ -2377,7 +2378,7 @@ fn logic_delay_knob(
     } else {
         norm
     };
-    draw_logic_knob_visual(ui.painter(), c, cx, cy, r, norm, LOGIC_MINT, false);
+    draw_logic_knob_visual(ui.painter(), c, cx, cy, r, norm, LOGIC_MINT, false, false);
     let value = if synced {
         format!("{:.0} ms", synced_delay_ms(note.value(), dev.value()))
     } else {
@@ -2407,6 +2408,7 @@ fn draw_logic_knob_visual(
     norm: f32,
     accent: Color32,
     center_dot: bool,
+    reverse_arc: bool,
 ) {
     let center = c.pos(cx, cy);
     let radius = r * c.s;
@@ -2433,15 +2435,16 @@ fn draw_logic_knob_visual(
         ARC_END,
         Stroke::new(4.0 * c.s, KNOB_TRACK),
     );
+    let angle = ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0);
+    let arc_anchor = if reverse_arc { ARC_END } else { ARC_START };
     draw_arc_line(
         painter,
         center,
         radius + 1.5 * c.s,
-        ARC_START,
-        ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0),
+        arc_anchor,
+        angle,
         Stroke::new(4.0 * c.s, accent),
     );
-    let angle = ARC_START + ARC_SWEEP * norm.clamp(0.0, 1.0);
     let indicator = center + vec2(angle.cos() * radius * 0.76, angle.sin() * radius * 0.76);
     let [r, g, b, _] = accent.to_array();
     painter.circle_filled(
@@ -2608,15 +2611,23 @@ fn commit_float_text_value(
 }
 
 fn knob_drag_delta(param: &nih_plug::params::FloatParam, raw_delta: f32) -> f32 {
-    if is_lpf_cut_param(param.name()) {
+    if is_reverse_drag_param(param.name()) {
         -raw_delta
     } else {
         raw_delta
     }
 }
 
+fn is_reverse_drag_param(name: &str) -> bool {
+    is_lpf_cut_param(name) || name == "Wet Pan R" || name == "Dry Pan R"
+}
+
 fn is_lpf_cut_param(name: &str) -> bool {
     name == "High Cut L" || name == "High Cut R"
+}
+
+fn is_reverse_arc_param(name: &str) -> bool {
+    is_lpf_cut_param(name) || name == "Wet Pan R" || name == "Dry Pan R"
 }
 
 fn logic_set_float_norm_relative(
@@ -4097,7 +4108,7 @@ fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, 
 
                 // Plugin name
                 ui.label(rich("NEBULA STEREO DELAY", 14.0 * s).color(ACCENT).strong());
-                ui.label(rich("v1.0", 9.0 * s).color(TEXT_SEC));
+                ui.label(rich("v1.1.0", 9.0 * s).color(TEXT_SEC));
                 ui.add_space(14.0 * s);
 
                 // Preset button

@@ -2,7 +2,7 @@
 
 # NEBULA STEREO DELAY
 
-**v1.0**
+**v1.1.0**
 
 *A stereo delay engine forged in double-precision Rust*
 

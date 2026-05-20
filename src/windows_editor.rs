@@ -63,7 +63,7 @@ use crate::state::MeterValues;
 
 const BASE_W: f32 = 1000.0;
 const BASE_H: f32 = 640.0;
-const DISPLAY_VERSION: &str = "v1.0";
+const DISPLAY_VERSION: &str = "v1.1.0";
 const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 8801;
 const TIMER_MS: u32 = 33;
@@ -711,6 +711,7 @@ impl NativeWindowState {
             &brushes.accent,
             brushes,
             s,
+            false,
         );
         let delay_value = if tempo_sync {
             format!("{:.0} ms", synced_delay_ms(note_param, dev_param))
@@ -832,6 +833,7 @@ impl NativeWindowState {
                 accent,
                 brushes,
                 s,
+                control.is_reverse_arc(),
             );
             draw_value_box(
                 rt,
@@ -869,6 +871,7 @@ impl NativeWindowState {
             &brushes.accent,
             brushes,
             s,
+            false,
         );
         draw_value_box(
             rt,
@@ -914,6 +917,7 @@ impl NativeWindowState {
             &brushes.magenta,
             brushes,
             s,
+            false,
         );
         draw_value_box(
             rt,
@@ -1087,6 +1091,7 @@ impl NativeWindowState {
             accent,
             brushes,
             s,
+            control.is_reverse_arc(),
         );
         draw_value_box(
             rt,
@@ -1796,7 +1801,7 @@ impl NativeWindowState {
             1.0 - ((y - rail.y) / rail.h).clamp(0.0, 1.0)
         } else {
             let delta = (drag.start_y - y) / (150.0 * layout.s).max(1.0);
-            if drag.control.is_lpf_cut() {
+            if drag.control.is_reverse_drag() {
                 drag.start_norm - delta
             } else {
                 drag.start_norm + delta
@@ -2796,6 +2801,14 @@ impl FloatControl {
         matches!(self, Self::HighCutL | Self::HighCutR)
     }
 
+    fn is_reverse_drag(self) -> bool {
+        self.is_lpf_cut() || matches!(self, Self::WetPanR | Self::DryPanR)
+    }
+
+    fn is_reverse_arc(self) -> bool {
+        self.is_reverse_drag()
+    }
+
     fn is_meter_trim(self) -> bool {
         matches!(self, Self::InputLevel | Self::OutputLevel)
     }
@@ -3141,12 +3154,12 @@ fn output_slot_center(layout: &Layout, slot: OutputSlot) -> (f32, f32) {
     let (x, y) = match slot {
         OutputSlot::LeftTop => (left_x, panel.y + 90.0 * s),
         OutputSlot::RightTop => (right_x, panel.y + 90.0 * s),
-        OutputSlot::LeftMiddle => (left_x, panel.y + 170.0 * s),
-        OutputSlot::RightMiddle => (right_x, panel.y + 170.0 * s),
+        OutputSlot::LeftMiddle => (left_x, panel.y + 184.0 * s),
+        OutputSlot::RightMiddle => (right_x, panel.y + 184.0 * s),
         OutputSlot::LeftBottom => (left_x, panel.y + 352.0 * s),
         OutputSlot::RightBottom => (right_x, panel.y + 352.0 * s),
-        OutputSlot::LeftLower => (left_x, panel.y + 432.0 * s),
-        OutputSlot::RightLower => (right_x, panel.y + 432.0 * s),
+        OutputSlot::LeftLower => (left_x, panel.y + 446.0 * s),
+        OutputSlot::RightLower => (right_x, panel.y + 446.0 * s),
     };
     (x, y)
 }
@@ -3498,6 +3511,7 @@ fn draw_knob(
     accent: &ID2D1SolidColorBrush,
     brushes: &Brushes,
     s: f32,
+    reverse_arc: bool,
 ) {
     let norm = norm.clamp(0.0, 1.0);
     let angle = ARC_START + ARC_SWEEP * norm;
@@ -3514,7 +3528,21 @@ fn draw_knob(
         &brushes.border,
         3.3 * s,
     );
-    draw_arc(rt, cx, cy, radius * 0.72, ARC_START, angle, accent, 3.0 * s);
+    let arc_anchor = if reverse_arc {
+        ARC_START + ARC_SWEEP
+    } else {
+        ARC_START
+    };
+    draw_arc(
+        rt,
+        cx,
+        cy,
+        radius * 0.72,
+        arc_anchor,
+        angle,
+        accent,
+        3.0 * s,
+    );
     let dot_x = cx + radius * 0.52 * angle.cos();
     let dot_y = cy + radius * 0.52 * angle.sin();
     fill_circle(rt, dot_x, dot_y, 4.2 * s, accent);
