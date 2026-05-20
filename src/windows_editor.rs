@@ -525,7 +525,7 @@ impl NativeWindowState {
             rect.w - 16.0 * s,
             22.0 * s,
         );
-        draw_value_box(rt, top, &format_meter_db(level_db), brushes, formats);
+        draw_meter_value_box(rt, top, &format_meter_db(level_db), brushes, formats);
 
         let rail_l = UiRect::new(
             rect.x + 17.0 * s,
@@ -574,7 +574,7 @@ impl NativeWindowState {
             rect.w - 16.0 * s,
             22.0 * s,
         );
-        draw_value_box(
+        draw_meter_value_box(
             rt,
             bottom,
             &format_float(self.float_param(trim)),
@@ -3239,6 +3239,7 @@ impl UiRect {
 #[derive(Clone)]
 struct TextFormats {
     tiny: IDWriteTextFormat,
+    meter_value: IDWriteTextFormat,
     small: IDWriteTextFormat,
     body: IDWriteTextFormat,
     title: IDWriteTextFormat,
@@ -3249,6 +3250,7 @@ impl TextFormats {
         let s = scale.clamp(0.7, 3.0);
         Some(Self {
             tiny: create_text_format(factory, 9.5 * s, false)?,
+            meter_value: create_text_format(factory, 7.4 * s, false)?,
             small: create_text_format(factory, 11.0 * s, false)?,
             body: create_text_format(factory, 13.0 * s, false)?,
             title: create_text_format(factory, 18.0 * s, true)?,
@@ -3626,6 +3628,25 @@ fn draw_value_box(
     formats: &TextFormats,
 ) {
     draw_value_box_state(rt, rect, label, true, brushes, formats);
+}
+
+fn draw_meter_value_box(
+    rt: &ID2D1HwndRenderTarget,
+    rect: UiRect,
+    label: &str,
+    brushes: &Brushes,
+    formats: &TextFormats,
+) {
+    fill_round(rt, rect, 4.0, &brushes.bg);
+    stroke_round(rt, rect, 4.0, &brushes.border, 1.0);
+    draw_text(
+        rt,
+        label,
+        rect,
+        &formats.meter_value,
+        &brushes.text_primary,
+        Align::Center,
+    );
 }
 
 fn draw_value_box_state(
