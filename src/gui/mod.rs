@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────────────────────────┐
-//! │ Top Bar: Name v1.1.0 | Preset | A/B | ← → | FX ON | FREE | UNLINKED │
+//! │ Top Bar: Name v1.1 | Preset | A/B | ← → | FX ON | FREE | UNLINKED │
 //! ├───────────────────────┬────────┬───────────────────────────────┤
 //! │  LEFT Channel Panel   │ Center │  RIGHT Channel Panel          │
 //! │  Input Mode           │Routing │  Input Mode                   │
@@ -451,7 +451,7 @@ fn draw_nebula_editor(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter
     painter.text(
         c.pos(LOGIC_W - 18.0, 34.0),
         Align2::RIGHT_CENTER,
-        "v1.1.0",
+        "v1.1",
         c.font(11.0),
         TEXT_SEC,
     );
@@ -1595,7 +1595,7 @@ fn draw_logic_command_bar(
     painter.text(
         c.pos(154.0, 18.0),
         Align2::LEFT_CENTER,
-        "v1.1.0",
+        "v1.1",
         c.font(9.0),
         LOGIC_DIM,
     );
@@ -4108,7 +4108,7 @@ fn draw_top_bar(ui: &mut Ui, state: &mut EditorState, setter: &ParamSetter<'_>, 
 
                 // Plugin name
                 ui.label(rich("NEBULA STEREO DELAY", 14.0 * s).color(ACCENT).strong());
-                ui.label(rich("v1.1.0", 9.0 * s).color(TEXT_SEC));
+                ui.label(rich("v1.1", 9.0 * s).color(TEXT_SEC));
                 ui.add_space(14.0 * s);
 
                 // Preset button

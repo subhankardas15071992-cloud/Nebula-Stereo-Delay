@@ -63,7 +63,7 @@ use crate::state::MeterValues;
 
 const BASE_W: f32 = 1000.0;
 const BASE_H: f32 = 640.0;
-const DISPLAY_VERSION: &str = "v1.1.0";
+const DISPLAY_VERSION: &str = "v1.1";
 const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 8801;
 const TIMER_MS: u32 = 33;
