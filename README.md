@@ -27,11 +27,16 @@ This isn't a gimmick. It's engineering.
 
 ---
 **Screenshot - macOS and Linux variant that uses EGUI**
-<img width="1003" height="698" alt="image" src="https://github.com/user-attachments/assets/255e4607-68d9-4906-8186-27c91fa00091" />
+<img width="1007" height="699" alt="image" src="https://github.com/user-attachments/assets/9746a945-cf81-4eec-997c-e641548c92c5" />
 ---
 **Screenshot - Windows variant that uses Direct2D**
-<img width="1010" height="671" alt="image" src="https://github.com/user-attachments/assets/29352956-fcc1-4936-98d5-2d3bc50d15ba" />
+<img width="1000" height="698" alt="image" src="https://github.com/user-attachments/assets/00366ac4-3556-49ea-82c8-f40c1aa5032c" />
 ---
+
+## What's new in v1.1.0
+**Global Left and Right Mix Knobs Replcaed with dedicated Left and Right channel Dry & Wet level knobs and Dry & Wet pan knobs** - With this new addition you can now tweak the stereo imaging of the delay even better, and dial the balance between Dry and Wet signal of the two channels with greater accuracy.
+**Microsoft Windows specific UI tweaks** - The Direct2D UI used on Microsoft Windows has been tweaked to look more coherent and the Note drop down menu going out of bound has been fixed.
+**Microsoft Windows rendering fixes** - Fixed an issue on the Direct2D variant wherein launching the Stereo Delay and our mono Delay together used to relicate the same screen aross the two delays. This issue was caused due to shared class name in the tow plugins. It has been fixed now.
 
 ## Highlights
 
@@ -150,15 +155,38 @@ Input ──► Input Mode Selection ──► ───────────
 | L/R → R/L | 0 – 100 % | 0 % |
 | Crossfeed Phase L-R / R-L | Normal / Inverted | Normal |
 
-### Global / Output
+### Top Ribbon
 
 | Parameter | Range | Default |
 |-----------|-------|---------|
-| Routing | 8 modes | Customized |
+| Preset | Presets | Last used preset |
+| A/B | A / B | A |
+| Undo | 50 steps | Activates when any parameter is changed |
+| Redo | 50 steps | Activates after Undo is used |
+| MIDI | MIDI On/Off, MIDI Learn, Clean Up, CLear All, Roll Back, Save | On |
 | Tempo Sync | Free / Sync | Free |
 | Stereo Link | Unlinked / Linked, ratio-preserving L/R adjustments | Unlinked |
-| Output Mix L | 0 – 100 % | 100 % |
-| Output Mix R | 0 – 100 % | 100 % |
+| Routing | 8 modes | Straight |
+| Oversampling | Off / 2x / 4x / 6x / 8x | Off |
+| FX toggle | On / Off | On |
+
+### Left Output
+
+| Parameter | Range | Default |
+|-----------|-------|---------|
+| Wet | 0 - 100 % | 100 % |
+| Dry | 0 - 100 % | 0 % |
+| Wet Pan | L100 - R100 | L100 |
+| Dry Pan | L100 - R100 | L100 |
+
+### Right Output
+
+| Parameter | Range | Default |
+|-----------|-------|---------|
+| Wet | 0 - 100 % | 100 % |
+| Dry | 0 - 100 % | 0 % |
+| Wet Pan | R100 - L100 | R100 |
+| Dry Pan | R100 - L100 | R100 |
 
 ---
 
