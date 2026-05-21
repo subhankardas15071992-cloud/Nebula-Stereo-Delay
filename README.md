@@ -34,9 +34,10 @@ This isn't a gimmick. It's engineering.
 ---
 
 ## What's new in v1.1.0
-**Global Left and Right Mix Knobs Replcaed with dedicated Left and Right channel Dry & Wet level knobs and Dry & Wet pan knobs** - With this new addition you can now tweak the stereo imaging of the delay even better, and dial the balance between Dry and Wet signal of the two channels with greater accuracy.
-**Microsoft Windows specific UI tweaks** - The Direct2D UI used on Microsoft Windows has been tweaked to look more coherent and the Note drop down menu going out of bound has been fixed.
-**Microsoft Windows rendering fixes** - Fixed an issue on the Direct2D variant wherein launching the Stereo Delay and our mono Delay together used to relicate the same screen aross the two delays. This issue was caused due to shared class name in the tow plugins. It has been fixed now.
+- **Global Left and Right Mix Knobs Replaced with dedicated Left and Right channel Dry & Wet level knobs and Dry & Wet pan knobs** - With this new addition you can now tweak the stereo imaging of the delay even better, and dial the balance between Dry and Wet signal of the two channels with greater accuracy.
+- **Tweaked the filter knobs for better aesthetics** - Now even the arc on the LPF knob moves counterclockwise to follow the knob.
+- **Microsoft Windows specific UI tweaks** - The Direct2D UI used on Microsoft Windows has been tweaked to look more coherent and the Note drop down menu going out of bound has been fixed.
+- **Microsoft Windows rendering fixes** - Fixed an issue on the Direct2D variant wherein launching the Stereo Delay and our mono Delay together used to relicate the same screen aross the two delays. This issue was caused due to shared class name in the tow plugins. It has been fixed now.
 
 ## Highlights
 
