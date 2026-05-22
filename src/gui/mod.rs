@@ -162,6 +162,8 @@ struct EditorState {
     preset_menu_open: bool,
     /// Inline numeric edit state for painted value boxes.
     value_edit: Option<ValueEditState>,
+    /// Last editor size written to persisted state.
+    last_editor_size: (u32, u32),
 }
 
 #[derive(Clone)]
@@ -185,7 +187,8 @@ pub fn create_egui_editor(
     midi_runtime: Arc<MidiRuntime>,
     meters: Arc<MeterValues>,
 ) -> Option<Box<dyn Editor>> {
-    let egui_state = EguiState::from_size(WIN_W, WIN_H);
+    let initial_size = params.editor_size_pixels();
+    let egui_state = EguiState::from_size(initial_size.0, initial_size.1);
     let egui_state_for_closure = egui_state.clone();
 
     if let Ok(learn) = params.midi_learn.read() {
@@ -206,6 +209,7 @@ pub fn create_egui_editor(
             preset_status: None,
             preset_menu_open: false,
             value_edit: None,
+            last_editor_size: initial_size,
         },
         |ctx, _state| {
             apply_dark_theme(ctx);
@@ -227,8 +231,16 @@ pub fn create_egui_editor(
                     );
                     draw_root(&mut root_ui, state, setter);
                 });
+            persist_editor_size_if_changed(state, egui_state.size());
         },
     )
+}
+
+fn persist_editor_size_if_changed(state: &mut EditorState, size: (u32, u32)) {
+    if state.last_editor_size != size {
+        state.params.set_editor_size(size.0 as f32, size.1 as f32);
+        state.last_editor_size = size;
+    }
 }
 
 /// Draw the entire plugin UI into the given `Ui`.
