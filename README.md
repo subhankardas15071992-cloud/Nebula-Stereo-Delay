@@ -273,6 +273,13 @@ GitHub Actions builds on every push and PR:
 
 ---
 
+## Credits
+
+- **AL** — Fixed Direct2D window class conflict causing DAW crash when loading multiple plugin instances. See `src/windows_editor.rs`.
+- Built with [opencode.ai](https://opencode.ai)
+
+---
+
 ## License
 
 Nebula Stereo Delay is open-source software licensed under the **GNU Affero General Public License v3**. See [LICENSE](LICENSE) for details.
