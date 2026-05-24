@@ -11,7 +11,7 @@ set -euo pipefail
 PLUGIN_NAME="Nebula Stereo Delay"
 PACKAGE_NAME="nebula-stereo-delay"
 LIB_CRATE_NAME="nebula_stereo_delay"
-VERSION="1.0.0"
+VERSION="1.2.0"
 BUNDLE_ID="audio.nebula.NebulaStereoDelay"
 VENDOR="Nebula Audio"
 
