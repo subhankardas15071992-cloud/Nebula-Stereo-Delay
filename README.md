@@ -2,7 +2,7 @@
 
 # NEBULA STEREO DELAY
 
-**v1.1.0**
+**v1.2.0**
 
 *A stereo delay engine forged in double-precision Rust*
 
@@ -270,6 +270,13 @@ GitHub Actions builds on every push and PR:
 3. **Windows** — x86_64 VST3 only
 4. **Linux** — x86_64 CLAP + VST3
 5. **Release** — Tag a `v*` release and all artifacts publish automatically
+
+---
+
+## Credits
+
+- **AL** — Fixed Direct2D window class conflict causing DAW crash when loading multiple plugin instances. See `src/windows_editor.rs`.
+- Built with [opencode.ai](https://opencode.ai)
 
 ---
 

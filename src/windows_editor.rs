@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Once, OnceLock};
 
 use nih_plug::params::{BoolParam, FloatParam, Param};
 use nih_plug::prelude::{Editor, GuiContext, ParamSetter, ParentWindowHandle};
@@ -43,12 +43,13 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
     LoadCursorW, RegisterClassW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS, DLGC_WANTCHARS,
-    GWLP_USERDATA, HMENU, IDC_ARROW, IDC_SIZENWSE, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW,
-    WINDOW_EX_STYLE, WM_CHAR, WM_DPICHANGED, WM_DPICHANGED_AFTERPARENT, WM_DPICHANGED_BEFOREPARENT,
-    WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WM_TIMER,
-    WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    UnregisterClassW, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS,
+    DLGC_WANTCHARS, GWLP_USERDATA, HMENU, IDC_ARROW, IDC_SIZENWSE, SWP_NOACTIVATE, SWP_NOZORDER,
+    SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_DPICHANGED, WM_DPICHANGED_AFTERPARENT,
+    WM_DPICHANGED_BEFOREPARENT, WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+    WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_VISIBLE,
 };
 use windows_numerics::Vector2;
 
@@ -66,7 +67,7 @@ const BASE_H: f32 = 640.0;
 const MIN_WINDOW_SCALE: f32 = 0.65;
 const MAX_WINDOW_SCALE: f32 = 3.0;
 const RESIZE_GRIP_SIZE: f32 = 24.0;
-const DISPLAY_VERSION: &str = "v1.1";
+const DISPLAY_VERSION: &str = "v1.2";
 const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 8801;
 const TIMER_MS: u32 = 33;
@@ -4808,7 +4809,15 @@ fn invalidate(hwnd: HWND) {
 }
 
 fn class_name() -> PCWSTR {
-    w!("NebulaAudio.NebulaStereoDelay.Direct2D.Editor.v1")
+    static CLASS_NAME: OnceLock<Vec<u16>> = OnceLock::new();
+    let wide = CLASS_NAME.get_or_init(|| {
+        let name = format!(
+            "NebulaAudio.NebulaStereoDelay.Direct2D.Editor.v1.{:x}",
+            register_window_class as *const fn() -> bool as usize
+        );
+        name.encode_utf16().chain(std::iter::once(0)).collect()
+    });
+    PCWSTR(wide.as_ptr())
 }
 
 fn module_instance() -> Option<HINSTANCE> {
@@ -4840,9 +4849,15 @@ fn register_window_class() -> bool {
             lpszMenuName: PCWSTR::null(),
             lpszClassName: class_name(),
         };
+        let class = class_name();
         let atom = unsafe { RegisterClassW(&wc) };
-        if atom != 0 || unsafe { GetLastError() } == ERROR_CLASS_ALREADY_EXISTS {
+        if atom != 0 {
             REGISTERED.store(true, Ordering::Release);
+        } else if unsafe { GetLastError() } == ERROR_CLASS_ALREADY_EXISTS {
+            let _ = unsafe { UnregisterClassW(class, Some(instance)) };
+            if unsafe { RegisterClassW(&wc) } != 0 {
+                REGISTERED.store(true, Ordering::Release);
+            }
         }
     });
 
