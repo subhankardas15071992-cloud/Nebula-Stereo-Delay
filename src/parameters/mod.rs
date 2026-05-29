@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp;
 use crate::midi::MidiLearnState;
+use crate::storage::PersistentStore;
 
 const DEFAULT_EDITOR_WIDTH: f32 = 1000.0;
 const DEFAULT_EDITOR_HEIGHT: f32 = 640.0;
@@ -1484,7 +1485,12 @@ impl Default for NebulaStereoDelayParams {
             ab_snapshots: RwLock::new(AbSnapshots::default()),
             undo_stack: RwLock::new(UndoRedoStack::default()),
             midi_learn: RwLock::new(MidiLearnState::default()),
-            editor_size: RwLock::new(EditorSizeState::default()),
+            editor_size: RwLock::new(
+                PersistentStore::load()
+                    .editor_size()
+                    .map(|(width, height)| EditorSizeState { width, height }.clamped())
+                    .unwrap_or_default(),
+            ),
         }
     }
 }
@@ -1492,6 +1498,20 @@ impl Default for NebulaStereoDelayParams {
 impl NebulaStereoDelayParams {
     /// Return the persisted editor size, clamped to the supported range.
     pub fn editor_size(&self) -> (f32, f32) {
+        if let Some(size) = PersistentStore::load()
+            .editor_size()
+            .map(|(width, height)| EditorSizeState { width, height }.clamped())
+        {
+            if let Ok(mut current) = self.editor_size.write() {
+                if (current.width - size.width).abs() >= 0.5
+                    || (current.height - size.height).abs() >= 0.5
+                {
+                    *current = size;
+                }
+            }
+            return (size.width, size.height);
+        }
+
         let size = self
             .editor_size
             .read()
@@ -1509,10 +1529,15 @@ impl NebulaStereoDelayParams {
     /// Persist a user-selected editor size in logical pixels.
     pub fn set_editor_size(&self, width: f32, height: f32) {
         let next = EditorSizeState { width, height }.clamped();
+        let mut changed = false;
         if let Ok(mut size) = self.editor_size.write() {
             if (size.width - next.width).abs() >= 0.5 || (size.height - next.height).abs() >= 0.5 {
                 *size = next;
+                changed = true;
             }
+        }
+        if changed {
+            let _ = PersistentStore::save_editor_size(next.width, next.height);
         }
     }
 

@@ -51,6 +51,8 @@ pub mod parameters;
 pub mod preset;
 #[cfg(feature = "plugin")]
 pub mod state;
+#[cfg(feature = "plugin")]
+mod storage;
 #[cfg(all(feature = "plugin", feature = "gui", target_os = "windows"))]
 mod windows_editor;
 
