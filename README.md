@@ -32,7 +32,9 @@ This isn't a gimmick. It's engineering.
 **Screenshot - Windows variant that uses Direct2D**
 <img width="1000" height="698" alt="image" src="https://github.com/user-attachments/assets/00366ac4-3556-49ea-82c8-f40c1aa5032c" />
 ---
-
+**What's new in v1.2.0**
+- **Freely resizable plugin windows** - The plugin window is now freely resizable on all platforms.
+---
 ## What's new in v1.1.0
 - **Global Left and Right Mix Knobs Replaced with dedicated Left and Right channel Dry & Wet level knobs and Dry & Wet pan knobs** - With this new addition you can now tweak the stereo imaging of the delay even better, and dial the balance between Dry and Wet signal of the two channels with greater accuracy.
 - **Tweaked the filter knobs for better aesthetics** - Now even the arc on the LPF knob moves counterclockwise to follow the knob.
