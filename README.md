@@ -34,6 +34,7 @@ This isn't a gimmick. It's engineering.
 ---
 **What's new in v1.2.0**
 - **Freely resizable plugin windows** - The plugin window is now freely resizable on all platforms.
+- **GUI size persistence** - The set plugin window size is persisted across sessions.
 
 ## What's new in v1.1.0
 - **Global Left and Right Mix Knobs Replaced with dedicated Left and Right channel Dry & Wet level knobs and Dry & Wet pan knobs** - With this new addition you can now tweak the stereo imaging of the delay even better, and dial the balance between Dry and Wet signal of the two channels with greater accuracy.
