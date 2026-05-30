@@ -27,10 +27,10 @@ This isn't a gimmick. It's engineering.
 
 ---
 **Screenshot - macOS and Linux variant that uses EGUI**
-<img width="1007" height="699" alt="image" src="https://github.com/user-attachments/assets/9746a945-cf81-4eec-997c-e641548c92c5" />
+<img width="1094" height="672" alt="image" src="https://github.com/user-attachments/assets/78bf68be-3f48-4d02-998e-16bd9b0cca70" />
 ---
 **Screenshot - Windows variant that uses Direct2D**
-<img width="1000" height="698" alt="image" src="https://github.com/user-attachments/assets/00366ac4-3556-49ea-82c8-f40c1aa5032c" />
+<img width="1010" height="671" alt="image" src="https://github.com/user-attachments/assets/dfbbf0eb-0e78-4d21-8f5c-e3f1e44df418" />
 ---
 **What's new in v1.2.0**
 - **Freely resizable plugin windows** - The plugin window is now freely resizable on all platforms.
